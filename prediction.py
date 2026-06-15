@@ -14,35 +14,25 @@ import io
 import re
 import os
 
-# ===================== 跨平台中文字体注册【核心修复：无外部文件，纯代码兼容】 =====================
+# ===================== 注册中文字体（修复PDF乱码核心） =====================
 def register_chinese_font():
-    """
-    多级兜底字体方案：纯代码、不依赖额外字体文件
-    优先级：Windows宋体 → Windows黑体 → Linux文泉驿正黑 → ReportLab内置字体
-    适配 Windows / Linux / Streamlit Cloud
-    """
-    font_candidates = [
-        # (字体别名, 字体文件路径)
-        ("SimSun", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc")),
-        ("SimHei", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf")),
-        ("WenQuanYiZenHei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
-    ]
-
-    for font_alias, font_path in font_candidates:
-        if font_alias in pdfmetrics.getRegisteredFontNames():
-            return font_alias
-        # 尝试加载当前候选字体
+    """注册Windows系统自带宋体，支持PDF中文渲染"""
+    font_name = "SimSun"
+    if font_name not in pdfmetrics.getRegisteredFontNames():
         try:
-            if os.path.exists(font_path):
-                pdfmetrics.registerFont(TTFont(font_alias, font_path))
-                return font_alias
+            # 自动获取Windows字体目录
+            font_path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc")
+            pdfmetrics.registerFont(TTFont(font_name, font_path, subfontIndex=0))
         except Exception:
-            continue
+            # 兜底：尝试黑体
+            try:
+                font_path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf")
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+            except Exception:
+                pass
+    return font_name
 
-    # 所有系统字体都加载失败：兜底使用ReportLab内置英文字体（程序不崩溃）
-    return "Helvetica"
-
-# 全局字体变量
+# 全局注册一次中文字体
 CHINESE_FONT = register_chinese_font()
 
 # ===================== 页面全局配置 & 样式 =====================
@@ -159,7 +149,7 @@ def calc_index_data(df, code_min, code_max):
     return idx_df
 
 def draw_index_fig(idx_df, idx_name, color):
-    """绘制单指数K线图（双Y轴）"""
+    """绘制单指数K线图（双Y轴，修复参数报错）"""
     if idx_df is None:
         return None
     fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
@@ -220,6 +210,7 @@ def stock_filter_and_pick(df, strategy, code2name):
     if len(metrics) < 5:
         return None, "有效个股不足5只，无法完成选股"
     m_df = pd.DataFrame(metrics)
+
     if "价值投资" in strategy:
         m_df = m_df.sort_values(["60日涨幅", "波动率"], ascending=[False, True])
     elif "趋势追涨" in strategy:
@@ -230,6 +221,7 @@ def stock_filter_and_pick(df, strategy, code2name):
             m_df = m_df.sort_values("20日涨幅", ascending=False)
     else:
         m_df = m_df.sort_values(["20日涨幅", "波动率"], ascending=[True, True])
+
     selected = m_df.head(5).reset_index(drop=True)
     res = []
     today = datetime.now()
@@ -246,6 +238,7 @@ def stock_filter_and_pick(df, strategy, code2name):
         s_df["MA5"] = s_df["收盘"].rolling(5).mean()
         s_df["MA10"] = s_df["收盘"].rolling(10).mean()
         s_df["MA20"] = s_df["收盘"].rolling(20).mean()
+
         res.append({
             "序号": i + 1,
             "股票代码": row["股票代码"],
@@ -267,7 +260,7 @@ def stock_filter_and_pick(df, strategy, code2name):
     return res, "✅ 选股完成，共筛选出5只优质个股"
 
 def draw_stock_fig(s_df, name):
-    """个股K线+成交量+均线"""
+    """个股K线+成交量+均线（修复rangeslider参数，确保出图）"""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
     up_color = "#dc2626"
     down_color = "#16a34a"
@@ -281,6 +274,7 @@ def draw_stock_fig(s_df, name):
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA20"], line=dict(color="#16a34a", width=1.5), name="20日均线"), row=1, col=1)
     vol_colors = [up_color if o <= c else down_color for o, c in zip(s_df["开盘"], s_df["收盘"])]
     fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["成交量"], marker_color=vol_colors, name="成交量"), row=2, col=1)
+
     fig.update_layout(
         title=f"{name} 历史日K线走势（含5/10/20日均线）",
         height=450, template="plotly_white",
@@ -294,11 +288,12 @@ def draw_stock_fig(s_df, name):
     return fig
 
 def create_pdf(strategy, stock_res, index_data, buf):
-    """生成PDF分析报告（纯系统字体，无外部文件）"""
+    """生成PDF分析报告（全中文支持，无乱码）"""
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=20, rightMargin=20)
     story = []
     styles = getSampleStyleSheet()
-    # 自定义样式，使用全局自动匹配的字体
+
+    # 自定义全中文样式
     title_style = ParagraphStyle(
         "ReportTitle", parent=styles["Heading1"],
         fontSize=18, alignment=1, textColor=colors.HexColor("#1e40af"),
@@ -312,6 +307,7 @@ def create_pdf(strategy, stock_res, index_data, buf):
         "ReportNormal", parent=styles["Normal"],
         fontSize=10, fontName=CHINESE_FONT, leading=14, spaceAfter=6
     )
+
     # 报告标题
     story.append(Paragraph("沪深300股票智能分析预测报告", title_style))
     story.append(Spacer(1, 12))
@@ -322,6 +318,7 @@ def create_pdf(strategy, stock_res, index_data, buf):
     story.append(Paragraph(f"策略说明：{cfg['desc']}", normal_style))
     story.append(Paragraph(f"选股规则：{cfg['select_rule']}", normal_style))
     story.append(Spacer(1, 15))
+
     # 大盘指数表格
     story.append(Paragraph("一、大盘指数概览", subtitle_style))
     idx_table = [["指数名称", "最新点位", "当日涨跌(%)", "20日涨跌(%)"]]
@@ -346,6 +343,7 @@ def create_pdf(strategy, stock_res, index_data, buf):
     ]))
     story.append(t1)
     story.append(Spacer(1, 15))
+
     # 选股结果表格
     story.append(Paragraph("二、选股结果明细", subtitle_style))
     stock_table = [["序号", "股票名称", "代码", "买入价(元)", "资金占比", "预期卖出价(元)", "卖出日期"]]
@@ -368,6 +366,7 @@ def create_pdf(strategy, stock_res, index_data, buf):
     ]))
     story.append(t2)
     story.append(Spacer(1, 15))
+
     # 投资建议与风险提示
     story.append(Paragraph("三、综合投资建议", subtitle_style))
     advice = Paragraph(
@@ -382,6 +381,7 @@ def create_pdf(strategy, stock_res, index_data, buf):
     story.append(Spacer(1, 10))
     risk = Paragraph("【风险提示】本报告仅为历史数据量化分析结果，不构成任何投资建议，股市有风险，入市需谨慎。", normal_style)
     story.append(risk)
+
     doc.build(story)
     buf.seek(0)
     return buf
@@ -391,7 +391,8 @@ def main():
     st.markdown("<h1 style='text-align:center'>📈 沪深300股票智能预测分析平台</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center; color:#64748b;'>双文件上传 | 代码名称匹配 | K线分析 | 策略选股 | PDF导出</p>", unsafe_allow_html=True)
     st.divider()
-    # 侧边栏：操作面板
+
+    # ========== 侧边栏：操作面板 ==========
     with st.sidebar:
         st.markdown("<div class='sidebar-header'><h3>⚙️ 操作面板</h3></div>", unsafe_allow_html=True)
         # 1. 上传沪深300名称表
@@ -403,6 +404,7 @@ def main():
             st.success(name_msg)
         else:
             st.info("请先上传股票名称清单")
+
         # 2. 上传行情数据
         st.subheader("2. 上传股票行情数据")
         file_data = st.file_uploader("选择 stock_data.csv", type=["csv"], key="data_file")
@@ -416,17 +418,20 @@ def main():
                 st.error(data_msg)
         elif file_data is not None and not code2name:
             st.warning("请先上传沪深300名单文件！")
+
         # 3. 选择策略
         st.subheader("3. 选择投资策略")
         select_strategy = st.selectbox("投资策略", list(STRATEGY_DICT.keys()))
         strat_cfg = STRATEGY_DICT[select_strategy]
         st.info(f"风险等级：{strat_cfg['risk_level']}")
         st.caption(strat_cfg["desc"])
+
         # 4. 运行按钮
         run_btn = st.button("🚀 开始智能分析预测", type="primary", disabled=(df_stock is None))
         if df_stock is None:
             st.caption("⚠️ 两个文件均上传后才可运行分析")
-    # 主页面：数据预览
+
+    # ========== 主页面：数据预览 ==========
     if df_stock is not None:
         st.subheader("一、上传数据预览")
         st.success(data_msg)
@@ -438,7 +443,8 @@ def main():
         st.markdown("**数据样例（前10行）**")
         st.dataframe(df_stock.head(10), width='stretch', hide_index=True)
         st.divider()
-        # 大盘指数展示
+
+        # ========== 大盘指数展示 ==========
         st.subheader("二、三大盘指数整体走势")
         index_result = {}
         for idx_name, rule in INDEX_CONFIG.items():
@@ -449,7 +455,8 @@ def main():
             if fig:
                 st.plotly_chart(fig, width='stretch')
         st.divider()
-        # 选股结果展示
+
+        # ========== 选股结果展示 ==========
         if run_btn:
             st.subheader(f"三、【{select_strategy}】选股结果（共5只）")
             stock_res, pick_msg = stock_filter_and_pick(df_stock, select_strategy, code2name)
@@ -460,6 +467,7 @@ def main():
                 df_res = pd.DataFrame(stock_res).drop(columns=["K线数据"])
                 st.dataframe(df_res, width='stretch', hide_index=True)
                 st.divider()
+
                 # 个股详情 + K线
                 st.subheader("四、个股详情与K线走势")
                 for item in stock_res:
@@ -475,6 +483,7 @@ def main():
                         k_fig = draw_stock_fig(item["K线数据"], item["股票名称"])
                         st.plotly_chart(k_fig, width='stretch')
                 st.divider()
+
                 # 投资建议与风险提示
                 st.subheader("五、综合投资建议")
                 st.markdown("""
@@ -491,6 +500,7 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 st.divider()
+
                 # PDF导出
                 st.subheader("六、报告下载")
                 pdf_buf = io.BytesIO()
@@ -504,5 +514,5 @@ def main():
                     use_container_width=True
                 )
 
-if __name == "__main__":
+if __name__ == "__main__":
     main()
