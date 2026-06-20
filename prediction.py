@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-沪深300股票智能预测分析平台 V6.1
+沪深300股票智能预测分析平台 V7.0
 - 上传CSV数据文件进行分析
 - 绝对估值: DCF现金流折现模型 + DDM股利贴现模型
 - 相对估值: PE/PB/PS/PCF 行业对比分析
 - 多因子综合评分选股
-- 精美K线图 + 投资建议 + 主营业务信息
+- 精美K线图 + 投资建议 + 主营业务信息 + 未来预测
 """
 
 import streamlit as st
@@ -469,10 +469,8 @@ def monte_carlo_prediction(s_df, days=30, simulations=500):
 
 # ===================== 投资建议生成 =====================
 def generate_investment_advice(comp, dcf, ddm, relative, row):
-    """生成个性化投资建议"""
     advice = []
     
-    # 基于综合评级
     if comp:
         rating = comp["评级"]
         upside = float(comp["上涨空间"].replace("%", ""))
@@ -484,17 +482,14 @@ def generate_investment_advice(comp, dcf, ddm, relative, row):
         else:
             advice.append(f"➖ **估值合理**: 当前估值处于合理区间，可关注技术面突破机会。")
     
-    # 基于DCF
     if dcf and dcf["估值差异"] > 10:
         advice.append(f"📊 **DCF视角**: 现金流折现估值{dcf['DCF估值']}元，较当前价格低估{dcf['估值差异']:.1f}%，反映企业内在价值被低估。")
     elif dcf and dcf["估值差异"] < -10:
         advice.append(f"📊 **DCF视角**: 现金流折现估值{dcf['DCF估值']}元，较当前价格高估{abs(dcf['估值差异']):.1f}%，需谨慎评估增长假设。")
     
-    # 基于DDM
     if ddm and ddm["估值差异"] > 10:
         advice.append(f"💰 **DDM视角**: 股利贴现估值{ddm['DDM估值']}元，股息回报吸引力较强，适合价值型投资者。")
     
-    # 基于相对估值
     pe_diff = relative.get("PE_TTM", {}).get("差异%", 0)
     pb_diff = relative.get("PB_MRQ", {}).get("差异%", 0)
     if pe_diff > 20:
@@ -502,14 +497,12 @@ def generate_investment_advice(comp, dcf, ddm, relative, row):
     elif pe_diff < -20:
         advice.append(f"📉 **PE对比**: 当前PE较行业中位数高{abs(pe_diff):.1f}%，相对行业偏贵。")
     
-    # 基于技术面
     trend = row.get("均线趋势", "")
     if trend == "多头":
         advice.append("📉 **技术形态**: 均线呈多头排列，短期趋势向好，可考虑顺势操作。")
     elif trend == "空头":
         advice.append("📉 **技术形态**: 均线呈空头排列，短期承压，建议等待企稳信号。")
     
-    # 波动率建议
     std = row.get("波动率", 0)
     if std > 3:
         advice.append(f"📊 **波动提示**: 近20日波动率{std:.2f}%较高，注意控制仓位，建议分批建仓。")
@@ -592,7 +585,6 @@ def main():
                 name = row["股票名称"]
                 
                 with st.expander(f"#{idx+1} {name} ({code}) | 综合评分: {row['综合评分']}", expanded=(idx==0)):
-                    # 基本信息
                     c1, c2, c3, c4, c5 = st.columns(5)
                     c1.metric("最新价", f"{row['最新价']}")
                     c2.metric("PE_TTM", row['PE_TTM'])
@@ -600,7 +592,6 @@ def main():
                     c4.metric("20日涨幅", f"{row['20日涨幅']}%")
                     c5.metric("均线趋势", row['均线趋势'])
                     
-                    # 主营业务
                     business = STOCK_BUSINESS.get(code, f"{name} - 具体业务信息请查阅公司年报")
                     st.markdown(f"""
                     <div style="background: #f0fdf4; padding: 12px; border-radius: 8px; border-left: 4px solid #16a34a; margin: 10px 0;">
@@ -608,7 +599,6 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # 绝对估值
                     st.markdown("#### 📊 绝对估值")
                     col_dcf, col_ddm = st.columns(2)
                     
@@ -634,7 +624,6 @@ def main():
                             st.markdown(f"预期股息: {ddm['预期股息']} | 要求回报率: {ddm['要求回报率']}")
                             st.markdown("</div>", unsafe_allow_html=True)
                     
-                    # 相对估值
                     st.markdown("#### 📈 相对估值（行业对比）")
                     relative = calc_relative_valuation(s_df, df_stock, code, name)
                     if relative:
@@ -651,7 +640,6 @@ def main():
                     else:
                         st.info("无可用的估值指标数据进行行业对比")
                     
-                    # 综合估值结论
                     comp = comprehensive_valuation(dcf, ddm, relative)
                     if comp:
                         st.markdown(f"""
@@ -662,12 +650,10 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                     
-                    # K线图
                     st.markdown("#### 📉 K线走势与技术指标")
                     k_fig = draw_stock_fig(s_df, name, code)
                     st.plotly_chart(k_fig, use_container_width=True)
                     
-                    # 价格预测
                     st.markdown("#### 🔮 蒙特卡洛价格预测")
                     pred_result = monte_carlo_prediction(s_df, days=30, simulations=500)
                     if pred_result:
@@ -675,7 +661,6 @@ def main():
                         st.plotly_chart(pred_fig, use_container_width=True)
                         st.info(f"预期30天后价格: **{target_price}** | 预期涨跌: **{upside}%**")
                     
-                    # 投资建议
                     st.markdown("#### 💡 个性化投资建议")
                     advice = generate_investment_advice(comp, dcf, ddm, relative, row)
                     st.markdown(f"""
@@ -684,7 +669,6 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # 未来是否适合投资
                     if comp:
                         rating = comp["评级"]
                         if "低估" in rating:
