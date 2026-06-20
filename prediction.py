@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-沪深300股票智能预测分析平台 V6.0
+沪深300股票智能预测分析平台 V6.1
+- 上传CSV数据文件进行分析
 - 绝对估值: DCF现金流折现模型 + DDM股利贴现模型
 - 相对估值: PE/PB/PS/PCF 行业对比分析
 - 多因子综合评分选股
-- 支持上传CSV数据文件
-- 精美K线图 + 投资建议
+- 精美K线图 + 投资建议 + 主营业务信息
 """
 
 import streamlit as st
@@ -16,7 +16,6 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import io
 import re
-import os
 
 st.set_page_config(
     page_title="沪深300股票智能预测分析平台",
@@ -25,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ===================== 自定义CSS =====================
 st.markdown("""
 <style>
 .main {background-color: #f8fafc; font-family: 'Microsoft YaHei', sans-serif;}
@@ -44,9 +42,102 @@ hr {border-color: #e2e8f0; margin:25px 0;}
 
 np.random.seed(42)
 
-# ===================== 工具函数 =====================
+# ===================== 内置主营业务数据 =====================
+STOCK_BUSINESS = {
+    "600519": "贵州茅台 - 白酒生产销售，高端白酒龙头",
+    "600036": "招商银行 - 商业银行，零售银行业务领先",
+    "601318": "中国平安 - 保险、银行、投资综合金融",
+    "000858": "五粮液 - 白酒生产销售",
+    "600900": "长江电力 - 水电发电运营",
+    "601012": "隆基绿能 - 光伏硅片及组件",
+    "002594": "比亚迪 - 新能源汽车及电池",
+    "600276": "恒瑞医药 - 创新药研发及销售",
+    "000333": "美的集团 - 家电制造",
+    "601888": "中国中免 - 免税商品销售",
+    "300750": "宁德时代 - 动力电池及储能",
+    "601398": "工商银行 - 大型国有商业银行",
+    "601288": "农业银行 - 大型国有商业银行",
+    "601939": "建设银行 - 大型国有商业银行",
+    "601988": "中国银行 - 大型国有商业银行",
+    "600030": "中信证券 - 证券经纪及投行",
+    "600887": "伊利股份 - 乳制品生产销售",
+    "000568": "泸州老窖 - 白酒生产销售",
+    "000001": "平安银行 - 商业银行",
+    "600809": "山西汾酒 - 白酒生产销售",
+    "002415": "海康威视 - 安防监控设备",
+    "601166": "兴业银行 - 股份制商业银行",
+    "600309": "万华化学 - 化工新材料",
+    "601899": "紫金矿业 - 金铜锌等矿产开采",
+    "300059": "东方财富 - 互联网金融服务",
+    "601668": "中国建筑 - 建筑工程承包",
+    "603259": "药明康德 - 医药研发外包",
+    "002352": "顺丰控股 - 快递物流服务",
+    "600436": "片仔癀 - 中药制造",
+    "601088": "中国神华 - 煤炭开采及发电",
+    "002714": "牧原股份 - 生猪养殖",
+    "601225": "陕西煤业 - 煤炭开采",
+    "600031": "三一重工 - 工程机械制造",
+    "000002": "万科A - 房地产开发",
+    "600048": "保利发展 - 房地产开发",
+    "002230": "科大讯飞 - 人工智能语音",
+    "601857": "中国石油 - 石油天然气开采",
+    "600028": "中国石化 - 石油炼化及销售",
+    "300760": "迈瑞医疗 - 医疗器械",
+    "603288": "海天味业 - 调味品制造",
+    "600438": "通威股份 - 光伏及农牧",
+    "002142": "宁波银行 - 城市商业银行",
+    "601601": "中国太保 - 保险业务",
+    "601628": "中国人寿 - 人寿保险",
+    "601766": "中国中车 - 轨道交通装备",
+    "601390": "中国中铁 - 铁路工程建设",
+    "601186": "中国铁建 - 铁路工程建设",
+    "601800": "中国交建 - 交通基建",
+    "601618": "中国中冶 - 冶金工程建设",
+    "601669": "中国电建 - 电力工程建设",
+    "601989": "中国重工 - 船舶制造",
+    "600089": "特变电工 - 输变电设备",
+    "600406": "国电南瑞 - 电力自动化",
+    "002074": "国轩高科 - 动力电池",
+    "300014": "亿纬锂能 - 锂电池",
+    "002709": "天赐材料 - 锂电池材料",
+    "002460": "赣锋锂业 - 锂化合物",
+    "603799": "华友钴业 - 钴镍新材料",
+    "300433": "蓝思科技 - 视窗防护玻璃",
+    "002475": "立讯精密 - 消费电子连接器",
+    "000725": "京东方A - 显示面板",
+    "601138": "工业富联 - 电子制造服务",
+    "002241": "歌尔股份 - 声学器件",
+    "603501": "韦尔股份 - 半导体设计",
+    "688981": "中芯国际 - 晶圆代工",
+    "600584": "长电科技 - 半导体封测",
+    "002371": "北方华创 - 半导体设备",
+    "603893": "瑞芯微 - 芯片设计",
+    "300782": "卓胜微 - 射频芯片",
+    "688012": "中微公司 - 半导体设备",
+    "688008": "澜起科技 - 内存接口芯片",
+    "603986": "兆易创新 - 存储芯片",
+    "300661": "圣邦股份 - 模拟芯片",
+    "688396": "华润微 - 功率半导体",
+    "600703": "三安光电 - LED芯片",
+    "002049": "紫光国微 - 智能安全芯片",
+    "300223": "北京君正 - 嵌入式CPU",
+    "603160": "汇顶科技 - 指纹识别芯片",
+    "300408": "三环集团 - 电子陶瓷",
+    "000063": "中兴通讯 - 通信设备",
+    "600498": "烽火通信 - 光通信设备",
+    "600487": "亨通光电 - 光纤光缆",
+    "002281": "光迅科技 - 光器件",
+    "300308": "中际旭创 - 光模块",
+    "600745": "闻泰科技 - 通讯终端",
+    "002156": "通富微电 - 集成电路封测",
+    "600460": "士兰微 - 半导体分立器件",
+    "300373": "扬杰科技 - 功率半导体",
+    "002185": "华天科技 - 集成电路封测",
+    "603005": "晶方科技 - 晶圆级封装",
+}
+
+# ===================== 数据加载函数 =====================
 def load_hs300_mapping(file):
-    """加载沪深300代码-名称映射"""
     try:
         df = pd.read_csv(file)
         df["纯代码"] = df["code"].apply(lambda x: re.sub(r"^(sh\.|sz\.)", "", str(x)))
@@ -59,7 +150,6 @@ def load_hs300_mapping(file):
 
 
 def load_stock_data(file, code2name):
-    """加载股票行情数据"""
     try:
         df = pd.read_csv(file)
         required_cols = ["股票代码", "日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]
@@ -73,7 +163,6 @@ def load_stock_data(file, code2name):
         df = df.sort_values(["股票代码", "日期"]).reset_index(drop=True)
         df["股票名称"] = df["股票代码"].map(code2name)
         
-        # 转换估值字段
         for col in ["PE_TTM", "PB_MRQ", "PS_TTM", "PCF_TTM"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -87,49 +176,36 @@ def load_stock_data(file, code2name):
 
 # ===================== 估值模型 =====================
 def calc_dcf_valuation(s_df, code, name):
-    """DCF现金流折现模型"""
     try:
         close = s_df["收盘"].iloc[-1]
-        avg_profit_growth = 0.05  # 假设5%平均盈利增长
-        wacc = 0.10  # 假设10%加权平均资本成本
-        terminal_growth = 0.03  # 永续增长率3%
-        
-        # 简化DCF: 使用当前价格反推隐含增长率
-        # 假设未来5年FCF = 当前价格 * (1+g)^n
-        # 这里用简化版本
-        fair_value = close * (1 + avg_profit_growth) / (wacc - terminal_growth) * (wacc - terminal_growth)
-        
-        # 更实际的简化估值
         pe = s_df["PE_TTM"].iloc[-1] if "PE_TTM" in s_df.columns and pd.notna(s_df["PE_TTM"].iloc[-1]) else 15
         pb = s_df["PB_MRQ"].iloc[-1] if "PB_MRQ" in s_df.columns and pd.notna(s_df["PB_MRQ"].iloc[-1]) else 1.5
         
-        # DCF简化: 基于PE和盈利增长
         eps_estimate = close / pe if pe > 0 else close / 15
-        future_eps = eps_estimate * ((1 + avg_profit_growth) ** 5)
-        target_pe = 15  # 目标PE
+        future_eps = eps_estimate * ((1.05) ** 5)
+        target_pe = 15
+        wacc = 0.10
         dcf_value = future_eps * target_pe / ((1 + wacc) ** 5)
         
         return {
             "当前价格": round(close, 2),
             "DCF估值": round(dcf_value, 2),
             "估值差异": round((dcf_value - close) / close * 100, 2),
-            "WACC": f"{wacc*100:.0f}%",
-            "永续增长率": f"{terminal_growth*100:.0f}%",
-            "盈利增长假设": f"{avg_profit_growth*100:.0f}%"
+            "WACC": "10%",
+            "永续增长率": "3%",
+            "盈利增长假设": "5%"
         }
     except Exception:
         return None
 
 
 def calc_ddm_valuation(s_df, code, name):
-    """DDM股利贴现模型 (Gordon Growth Model)"""
     try:
         close = s_df["收盘"].iloc[-1]
-        # 假设股息率2-4%
         dividend_yield = 0.03
-        d1 = close * dividend_yield  # 预期下一年股息
-        required_return = 0.10  # 要求回报率
-        growth_rate = 0.03  # 股息增长率
+        d1 = close * dividend_yield
+        required_return = 0.10
+        growth_rate = 0.03
         
         if required_return > growth_rate:
             ddm_value = d1 / (required_return - growth_rate)
@@ -141,25 +217,21 @@ def calc_ddm_valuation(s_df, code, name):
             "DDM估值": round(ddm_value, 2),
             "估值差异": round((ddm_value - close) / close * 100, 2),
             "预期股息": round(d1, 2),
-            "要求回报率": f"{required_return*100:.0f}%",
-            "股息增长率": f"{growth_rate*100:.0f}%"
+            "要求回报率": "10%",
+            "股息增长率": "3%"
         }
     except Exception:
         return None
 
 
 def calc_relative_valuation(s_df, all_df, code, name):
-    """相对估值: PE/PB/PS/PCF 行业对比"""
     try:
         close = s_df["收盘"].iloc[-1]
-        
-        # 获取当前股票的估值指标
         pe = s_df["PE_TTM"].iloc[-1] if "PE_TTM" in s_df.columns and pd.notna(s_df["PE_TTM"].iloc[-1]) else None
         pb = s_df["PB_MRQ"].iloc[-1] if "PB_MRQ" in s_df.columns and pd.notna(s_df["PB_MRQ"].iloc[-1]) else None
         ps = s_df["PS_TTM"].iloc[-1] if "PS_TTM" in s_df.columns and pd.notna(s_df["PS_TTM"].iloc[-1]) else None
         pcf = s_df["PCF_TTM"].iloc[-1] if "PCF_TTM" in s_df.columns and pd.notna(s_df["PCF_TTM"].iloc[-1]) else None
         
-        # 计算行业均值（使用所有股票的最新数据）
         latest = all_df.groupby("股票代码").last()
         pe_mean = latest["PE_TTM"].replace(0, np.nan).median() if "PE_TTM" in latest.columns else None
         pb_mean = latest["PB_MRQ"].replace(0, np.nan).median() if "PB_MRQ" in latest.columns else None
@@ -194,14 +266,11 @@ def calc_relative_valuation(s_df, all_df, code, name):
 
 
 def comprehensive_valuation(dcf, ddm, relative):
-    """综合估值分析"""
     valuations = []
-    
     if dcf:
         valuations.append(dcf["DCF估值"])
     if ddm:
         valuations.append(ddm["DDM估值"])
-    
     for key, val in relative.items():
         if "估值" in val:
             valuations.append(val["估值"])
@@ -212,26 +281,20 @@ def comprehensive_valuation(dcf, ddm, relative):
     avg_valuation = np.mean(valuations)
     min_valuation = np.min(valuations)
     max_valuation = np.max(valuations)
-    
     current_price = dcf["当前价格"] if dcf else (ddm["当前价格"] if ddm else None)
     
     if current_price:
         upside = (avg_valuation - current_price) / current_price * 100
         if upside > 15:
-            rating = "强烈低估"
-            color = "#16a34a"
+            rating = "强烈低估"; color = "#16a34a"
         elif upside > 5:
-            rating = "轻度低估"
-            color = "#22c55e"
+            rating = "轻度低估"; color = "#22c55e"
         elif upside > -5:
-            rating = "合理估值"
-            color = "#64748b"
+            rating = "合理估值"; color = "#64748b"
         elif upside > -15:
-            rating = "轻度高估"
-            color = "#f59e0b"
+            rating = "轻度高估"; color = "#f59e0b"
         else:
-            rating = "严重高估"
-            color = "#dc2626"
+            rating = "严重高估"; color = "#dc2626"
         
         return {
             "综合估值": round(avg_valuation, 2),
@@ -246,7 +309,6 @@ def comprehensive_valuation(dcf, ddm, relative):
 
 # ===================== 选股与图表 =====================
 def multi_factor_stock_pick(df, code2name):
-    """多因子综合评分选股"""
     stock_list = df["股票代码"].unique()
     metrics = []
     
@@ -258,27 +320,23 @@ def multi_factor_stock_pick(df, code2name):
         close = s_df["收盘"].iloc[-1]
         ret20 = (close - s_df["收盘"].iloc[-21]) / s_df["收盘"].iloc[-21] if len(s_df) >= 21 else 0
         ret60 = (close - s_df["收盘"].iloc[-61]) / s_df["收盘"].iloc[-61] if len(s_df) >= 61 else 0
-        vol = s_df["换手率"].iloc[-20:].mean()
         std = s_df["涨跌幅"].iloc[-20:].std()
         
         ma5 = s_df["收盘"].rolling(5).mean().iloc[-1]
         ma10 = s_df["收盘"].rolling(10).mean().iloc[-1]
         ma20 = s_df["收盘"].rolling(20).mean().iloc[-1]
         ma60 = s_df["收盘"].rolling(60).mean().iloc[-1]
-        
         trend = 1 if ma5 > ma10 > ma20 else (-1 if ma5 < ma10 < ma20 else 0)
         
-        # 估值因子
         pe = s_df["PE_TTM"].iloc[-1] if "PE_TTM" in s_df.columns and pd.notna(s_df["PE_TTM"].iloc[-1]) else 20
         pb = s_df["PB_MRQ"].iloc[-1] if "PB_MRQ" in s_df.columns and pd.notna(s_df["PB_MRQ"].iloc[-1]) else 2
         
-        # 多因子评分
-        value_score = max(0, min(100, (30 - pe) / 30 * 100)) if pe > 0 else 50  # PE越低越好
-        value_score += max(0, min(100, (3 - pb) / 3 * 100)) if pb > 0 else 50  # PB越低越好
+        value_score = max(0, min(100, (30 - pe) / 30 * 100)) if pe > 0 else 50
+        value_score += max(0, min(100, (3 - pb) / 3 * 100)) if pb > 0 else 50
         value_score /= 2
         
-        momentum_score = max(0, min(100, ret20 * 100 + 50))  # 20日涨幅
-        quality_score = max(0, min(100, 100 - std * 10))  # 波动率越低越好
+        momentum_score = max(0, min(100, ret20 * 100 + 50))
+        quality_score = max(0, min(100, 100 - std * 10))
         trend_score = 80 if trend == 1 else (40 if trend == 0 else 20)
         
         total_score = value_score * 0.30 + momentum_score * 0.25 + quality_score * 0.25 + trend_score * 0.20
@@ -310,21 +368,18 @@ def multi_factor_stock_pick(df, code2name):
 
 
 def draw_stock_fig(s_df, name, code):
-    """个股K线+均线+成交量+MACD+RSI"""
     s_df = s_df.copy()
     s_df["MA5"] = s_df["收盘"].rolling(5).mean()
     s_df["MA10"] = s_df["收盘"].rolling(10).mean()
     s_df["MA20"] = s_df["收盘"].rolling(20).mean()
     s_df["MA60"] = s_df["收盘"].rolling(60).mean()
     
-    # MACD
     exp1 = s_df["收盘"].ewm(span=12).mean()
     exp2 = s_df["收盘"].ewm(span=26).mean()
     s_df["MACD_DIF"] = exp1 - exp2
     s_df["MACD_DEA"] = s_df["MACD_DIF"].ewm(span=9).mean()
     s_df["MACD_HIST"] = 2 * (s_df["MACD_DIF"] - s_df["MACD_DEA"])
     
-    # RSI
     delta = s_df["收盘"].diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -339,26 +394,22 @@ def draw_stock_fig(s_df, name, code):
     
     up_color, down_color = "#dc2626", "#16a34a"
     
-    # K线
     fig.add_trace(go.Candlestick(
         x=s_df["日期"], open=s_df["开盘"], high=s_df["最高"],
         low=s_df["最低"], close=s_df["收盘"],
         increasing_line_color=up_color, decreasing_line_color=down_color, name="日K"
     ), row=1, col=1)
     
-    # 均线
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA5"], line=dict(color="#1e40af", width=1), name="MA5"), row=1, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA10"], line=dict(color="#f59e0b", width=1), name="MA10"), row=1, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA20"], line=dict(color="#16a34a", width=1), name="MA20"), row=1, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA60"], line=dict(color="#9333ea", width=1.5), name="MA60"), row=1, col=1)
     
-    # MACD
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MACD_DIF"], line=dict(color="#1e40af", width=1), name="DIF"), row=2, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MACD_DEA"], line=dict(color="#f59e0b", width=1), name="DEA"), row=2, col=1)
     colors_macd = [up_color if h >= 0 else down_color for h in s_df["MACD_HIST"]]
     fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["MACD_HIST"], marker_color=colors_macd, name="MACD柱"), row=2, col=1)
     
-    # RSI
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["RSI"], line=dict(color="#8b5cf6", width=1.5), name="RSI"), row=3, col=1)
     fig.add_hline(y=70, line_dash="dash", line_color="#dc2626", row=3, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="#16a34a", row=3, col=1)
@@ -377,7 +428,6 @@ def draw_stock_fig(s_df, name, code):
 
 
 def monte_carlo_prediction(s_df, days=30, simulations=500):
-    """蒙特卡洛价格预测"""
     returns = s_df["涨跌幅"].dropna() / 100
     if len(returns) < 20:
         return None
@@ -417,13 +467,64 @@ def monte_carlo_prediction(s_df, days=30, simulations=500):
     return fig, round(target_price, 2), round(upside, 2)
 
 
+# ===================== 投资建议生成 =====================
+def generate_investment_advice(comp, dcf, ddm, relative, row):
+    """生成个性化投资建议"""
+    advice = []
+    
+    # 基于综合评级
+    if comp:
+        rating = comp["评级"]
+        upside = float(comp["上涨空间"].replace("%", ""))
+        
+        if "低估" in rating:
+            advice.append(f"✅ **估值优势**: 综合估值显示该股票{rating}，预期上涨空间约{comp['上涨空间']}，具备中长期投资价值。")
+        elif "高估" in rating:
+            advice.append(f"⚠️ **估值风险**: 综合估值显示该股票{rating}，当前价格可能透支未来增长，建议谨慎。")
+        else:
+            advice.append(f"➖ **估值合理**: 当前估值处于合理区间，可关注技术面突破机会。")
+    
+    # 基于DCF
+    if dcf and dcf["估值差异"] > 10:
+        advice.append(f"📊 **DCF视角**: 现金流折现估值{dcf['DCF估值']}元，较当前价格低估{dcf['估值差异']:.1f}%，反映企业内在价值被低估。")
+    elif dcf and dcf["估值差异"] < -10:
+        advice.append(f"📊 **DCF视角**: 现金流折现估值{dcf['DCF估值']}元，较当前价格高估{abs(dcf['估值差异']):.1f}%，需谨慎评估增长假设。")
+    
+    # 基于DDM
+    if ddm and ddm["估值差异"] > 10:
+        advice.append(f"💰 **DDM视角**: 股利贴现估值{ddm['DDM估值']}元，股息回报吸引力较强，适合价值型投资者。")
+    
+    # 基于相对估值
+    pe_diff = relative.get("PE_TTM", {}).get("差异%", 0)
+    pb_diff = relative.get("PB_MRQ", {}).get("差异%", 0)
+    if pe_diff > 20:
+        advice.append(f"📈 **PE对比**: 当前PE较行业中位数低{pe_diff:.1f}%，估值具有相对优势。")
+    elif pe_diff < -20:
+        advice.append(f"📉 **PE对比**: 当前PE较行业中位数高{abs(pe_diff):.1f}%，相对行业偏贵。")
+    
+    # 基于技术面
+    trend = row.get("均线趋势", "")
+    if trend == "多头":
+        advice.append("📉 **技术形态**: 均线呈多头排列，短期趋势向好，可考虑顺势操作。")
+    elif trend == "空头":
+        advice.append("📉 **技术形态**: 均线呈空头排列，短期承压，建议等待企稳信号。")
+    
+    # 波动率建议
+    std = row.get("波动率", 0)
+    if std > 3:
+        advice.append(f"📊 **波动提示**: 近20日波动率{std:.2f}%较高，注意控制仓位，建议分批建仓。")
+    else:
+        advice.append(f"📊 **波动提示**: 近20日波动率{std:.2f}%较低，股价相对稳定。")
+    
+    return "\n\n".join(advice)
+
+
 # ===================== 主程序 =====================
 def main():
     st.markdown("<h1 style='text-align:center'>📈 沪深300股票智能预测分析平台</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center; color:#64748b;'>绝对估值(DCF+DDM) + 相对估值(PE/PB/PS) | 多因子选股 | K线分析 | 价格预测</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center; color:#64748b;'>绝对估值(DCF+DDM) + 相对估值(PE/PB/PS) | 多因子选股 | K线分析 | 价格预测 | 投资建议</p>", unsafe_allow_html=True)
     st.divider()
     
-    # ========== 侧边栏 ==========
     with st.sidebar:
         st.markdown("<div class='sidebar-header'><h3>⚙️ 操作面板</h3></div>", unsafe_allow_html=True)
         
@@ -456,7 +557,6 @@ def main():
         if df_stock is None:
             st.caption("⚠️ 两个文件均上传后才可运行分析")
     
-    # ========== 主页面 ==========
     if df_stock is not None:
         st.subheader("一、数据概览")
         st.success(data_msg)
@@ -471,7 +571,6 @@ def main():
         st.divider()
         
         if run_btn:
-            # ========== 智能选股 ==========
             st.subheader("二、多因子智能选股（Top 5）")
             with st.spinner("正在进行多因子评分..."):
                 selected_df, pick_msg = multi_factor_stock_pick(df_stock, code2name)
@@ -485,7 +584,6 @@ def main():
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             st.divider()
             
-            # ========== 个股深度分析 ==========
             st.subheader("三、个股深度估值分析")
             
             for idx, row in selected_df.iterrows():
@@ -501,6 +599,14 @@ def main():
                     c3.metric("PB_MRQ", row['PB_MRQ'])
                     c4.metric("20日涨幅", f"{row['20日涨幅']}%")
                     c5.metric("均线趋势", row['均线趋势'])
+                    
+                    # 主营业务
+                    business = STOCK_BUSINESS.get(code, f"{name} - 具体业务信息请查阅公司年报")
+                    st.markdown(f"""
+                    <div style="background: #f0fdf4; padding: 12px; border-radius: 8px; border-left: 4px solid #16a34a; margin: 10px 0;">
+                    <strong>🏢 主营业务:</strong> {business}
+                    </div>
+                    """, unsafe_allow_html=True)
                     
                     # 绝对估值
                     st.markdown("#### 📊 绝对估值")
@@ -563,15 +669,33 @@ def main():
                     
                     # 价格预测
                     st.markdown("#### 🔮 蒙特卡洛价格预测")
-                    pred_result = monte_carlo_prediction(s_df)
+                    pred_result = monte_carlo_prediction(s_df, days=30, simulations=500)
                     if pred_result:
                         pred_fig, target_price, upside = pred_result
                         st.plotly_chart(pred_fig, use_container_width=True)
-                        st.info(f"预期{days}天后价格: **{target_price}** | 预期涨跌: **{upside}%**")
+                        st.info(f"预期30天后价格: **{target_price}** | 预期涨跌: **{upside}%**")
+                    
+                    # 投资建议
+                    st.markdown("#### 💡 个性化投资建议")
+                    advice = generate_investment_advice(comp, dcf, ddm, relative, row)
+                    st.markdown(f"""
+                    <div class="advice-box">
+                    {advice}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # 未来是否适合投资
+                    if comp:
+                        rating = comp["评级"]
+                        if "低估" in rating:
+                            st.success(f"✅ **未来投资判断**: 该股票当前{rating}，综合估值有{comp['上涨空间']}的上涨空间，**适合中长期投资**。建议分批建仓，设置止损位在{row['最新价']*0.92:.2f}元（-8%）附近。")
+                        elif "高估" in rating:
+                            st.error(f"❌ **未来投资判断**: 该股票当前{rating}，估值偏高，**不建议新建仓位**。已持仓者建议逐步减仓，或等待回调至合理估值区间再考虑。")
+                        else:
+                            st.info(f"➖ **未来投资判断**: 该股票估值处于合理区间，**可观望或轻仓参与**。建议等待技术面突破或估值进一步下移后再加大仓位。")
                     
                     st.divider()
             
-            # ========== 投资建议 ==========
             st.subheader("四、综合投资建议")
             st.markdown("""
             <div class="advice-box">
