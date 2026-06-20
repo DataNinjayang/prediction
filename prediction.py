@@ -1,9 +1,10 @@
 """
-沪深300股票智能预测分析平台 V2.0
-- 使用 akshare 获取实时沪深300成分股及历史数据
-- 整合 DDM 股利贴现模型进行基本面估值
-- 获取个股行业分类、主营业务、财务指标
-- 多维度数据分析与精美可视化
+沪深300股票智能预测分析平台 V4.0
+- 使用 akshare 实时获取沪深300成分股全部数据
+- 绝对估值法: DCF现金流折现模型 + DDM股利贴现模型
+- 相对估值法: PE/PB/PS/EV/EBITDA 行业对比
+- 多因子综合评分模型选股
+- 精美K线图 + 估值信息整合展示
 - 适配 Streamlit Cloud 部署
 """
 
@@ -16,11 +17,11 @@ import akshare as ak
 from datetime import datetime, timedelta
 import time
 import warnings
-import io
 import re
 from scipy import stats
 
 warnings.filterwarnings("ignore")
+np.random.seed(42)
 
 # ===================== 页面全局配置 =====================
 st.set_page_config(
@@ -35,134 +36,90 @@ custom_css = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
 
-/* 全局样式 */
 .main .block-container {
-    padding-top: 2rem;
-    padding-bottom: 3rem;
-    max-width: 1440px;
-    margin: 0 auto;
+    padding-top: 2rem; padding-bottom: 3rem;
+    max-width: 1440px; margin: 0 auto;
     background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
     border-radius: 16px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.06);
 }
 
-/* 标题区域 */
-.hero-title {
-    text-align: center;
-    padding: 30px 0 10px;
-}
+.hero-title { text-align: center; padding: 30px 0 10px; }
 .hero-title h1 {
-    font-size: 2.5rem;
-    font-weight: 700;
+    font-size: 2.5rem; font-weight: 700;
     background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 8px;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; margin-bottom: 8px;
 }
-.hero-title p {
-    color: #64748b;
-    font-size: 1rem;
-    letter-spacing: 1px;
-}
+.hero-title p { color: #64748b; font-size: 1rem; letter-spacing: 1px; }
 
-/* 侧边栏 */
 .sidebar-header {
     background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-    color: white;
-    padding: 18px 15px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-    text-align: center;
+    color: white; padding: 18px 15px; border-radius: 12px;
+    margin-bottom: 20px; text-align: center;
     box-shadow: 0 4px 12px rgba(30,64,175,0.3);
-}
-.sidebar-header h3 {
-    margin: 0;
-    font-size: 1.1rem;
 }
 
-/* 按钮 */
 .stButton > button {
     background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    font-weight: 600;
-    padding: 12px 24px;
+    color: white; border: none; border-radius: 10px;
+    font-weight: 600; padding: 12px 24px;
     transition: all 0.3s ease;
-    box-shadow: 0 4px 12px rgba(30,64,175,0.3);
-    width: 100%;
+    box-shadow: 0 4px 12px rgba(30,64,175,0.3); width: 100%;
 }
 .stButton > button:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(30,64,175,0.4);
 }
-.stButton > button:disabled {
-    background: #94a3b8;
-    box-shadow: none;
-    transform: none;
-}
 
-/* 信息框 */
 .advice-box {
     background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-    padding: 24px;
-    border-radius: 12px;
-    border-left: 5px solid #1e40af;
-    margin: 15px 0;
+    padding: 24px; border-radius: 12px;
+    border-left: 5px solid #1e40af; margin: 15px 0;
     box-shadow: 0 2px 8px rgba(30,64,175,0.1);
 }
 .risk-box {
     background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    padding: 20px;
-    border-radius: 12px;
-    border-left: 5px solid #dc2626;
-    margin: 10px 0;
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #dc2626; margin: 10px 0;
     box-shadow: 0 2px 8px rgba(220,38,38,0.1);
 }
 .info-box {
     background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    padding: 20px;
-    border-radius: 12px;
-    border-left: 5px solid #16a34a;
-    margin: 10px 0;
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #16a34a; margin: 10px 0;
     box-shadow: 0 2px 8px rgba(22,163,74,0.1);
 }
 .valuation-box {
     background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
-    padding: 20px;
-    border-radius: 12px;
-    border-left: 5px solid #f59e0b;
-    margin: 10px 0;
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #f59e0b; margin: 10px 0;
     box-shadow: 0 2px 8px rgba(245,158,11,0.1);
 }
+.factor-box {
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #8b5cf6; margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(139,92,246,0.1);
+}
 
-/* 分割线 */
 hr, .stDivider {
-    border: none;
-    height: 2px;
+    border: none; height: 2px;
     background: linear-gradient(90deg, transparent 0%, #cbd5e1 50%, transparent 100%);
     margin: 30px 0;
 }
 
-/* Tab样式 */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    background: #f1f5f9;
-    padding: 8px;
-    border-radius: 12px;
+    gap: 8px; background: #f1f5f9;
+    padding: 8px; border-radius: 12px;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 8px;
-    padding: 10px 20px;
-    font-weight: 500;
+    border-radius: 8px; padding: 10px 20px; font-weight: 500;
 }
 .stTabs [aria-selected="true"] {
-    background: white;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
-/* 隐藏默认元素 */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
@@ -170,61 +127,35 @@ header {visibility: hidden;}
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# ===================== 策略配置 =====================
-STRATEGY_DICT = {
-    "价值投资策略（长线稳健）": {
-        "desc": "精选低估值、高基本面沪深300个股，长期持有、分批止盈，适合稳健型投资者",
-        "hold_days": (60, 120),
-        "target_return": (0.15, 0.35),
-        "batch_sell": True,
-        "sell_ratio": [0.4, 0.3, 0.3],
-        "capital_ratio": (15, 25),
-        "risk_level": "低风险",
-        "risk_color": "#16a34a",
-        "select_rule": "优先选择DDM估值合理、PE/PB偏低、ROE稳定、60日走势稳定的个股"
-    },
-    "趋势追涨策略（中线波段）": {
-        "desc": "筛选均线多头、成交量放大的趋势个股，波段操作，适合中等风险投资者",
-        "hold_days": (20, 45),
-        "target_return": (0.08, 0.25),
-        "batch_sell": True,
-        "sell_ratio": [0.5, 0.5],
-        "capital_ratio": (18, 28),
-        "risk_level": "中风险",
-        "risk_color": "#f59e0b",
-        "select_rule": "优先选择均线多头排列、MACD金叉、短期涨幅靠前的个股"
-    },
-    "反转抄底策略（短线博弈）": {
-        "desc": "筛选短期超跌、缩量企稳个股，短线反弹博弈，适合激进型投资者",
-        "hold_days": (7, 20),
-        "target_return": (0.05, 0.18),
-        "batch_sell": False,
-        "sell_ratio": [1.0],
-        "capital_ratio": (20, 30),
-        "risk_level": "高风险",
-        "risk_color": "#dc2626",
-        "select_rule": "优先选择RSI超卖、短期超跌、波动率下降的反弹潜力个股"
-    }
-}
-
 # ===================== 行业分类映射 =====================
 INDUSTRY_CATEGORIES = {
-    "金融": ["银行", "保险", "证券", "多元金融", "信托", "期货"],
-    "消费": ["白酒", "食品", "饮料", "家电", "零售", "服装", "化妆品", "旅游", "酒店"],
-    "医药": ["医药", "生物", "医疗器械", "医疗服务", "中药", "化学制药"],
-    "科技": ["半导体", "电子", "软件", "计算机", "通信", "互联网", "人工智能"],
-    "新能源": ["光伏", "风电", "锂电池", "新能源汽车", "储能", "氢能"],
-    "制造": ["机械", "汽车", "军工", "航空航天", "船舶", "重工"],
-    "材料": ["化工", "钢铁", "有色", "建材", "造纸", "塑料", "橡胶"],
-    "基建": ["建筑", "房地产", "建材", "工程", "水泥"],
-    "能源": ["煤炭", "石油", "天然气", "电力", "公用事业"],
-    "物流": ["交通运输", "物流", "港口", "航运", "航空"]
+    "金融": ["银行", "保险", "证券", "多元金融", "信托", "期货", "金融"],
+    "消费": ["白酒", "食品", "饮料", "家电", "零售", "服装", "化妆品", "旅游", "酒店", "消费"],
+    "医药": ["医药", "生物", "医疗器械", "医疗服务", "中药", "化学制药", "医疗保健"],
+    "科技": ["半导体", "电子", "软件", "计算机", "通信", "互联网", "人工智能", "科技"],
+    "新能源": ["光伏", "风电", "锂电池", "新能源汽车", "储能", "氢能", "新能源"],
+    "制造": ["机械", "汽车", "军工", "航空航天", "船舶", "重工", "制造"],
+    "材料": ["化工", "钢铁", "有色", "建材", "造纸", "塑料", "橡胶", "材料"],
+    "基建": ["建筑", "房地产", "工程", "水泥", "基建"],
+    "能源": ["煤炭", "石油", "天然气", "电力", "公用事业", "能源"],
+    "物流": ["交通运输", "物流", "港口", "航运", "航空", "物流"]
 }
+
+
+def classify_industry(industry_name):
+    if not industry_name:
+        return "其他"
+    industry_name = str(industry_name)
+    for category, keywords in INDUSTRY_CATEGORIES.items():
+        for kw in keywords:
+            if kw in industry_name:
+                return category
+    return "其他"
+
 
 # ===================== 数据获取函数 =====================
 @st.cache_data(ttl=1800, show_spinner="正在获取沪深300成分股列表...")
 def get_hs300_constituents():
-    """获取沪深300成分股列表（使用akshare实时数据）"""
     try:
         df = ak.index_stock_cons(symbol="000300")
         code_col = "品种代码" if "品种代码" in df.columns else "code"
@@ -235,46 +166,33 @@ def get_hs300_constituents():
         code2name = dict(zip(df["纯代码"].astype(int), df[name_col]))
         return code2name, f"成功获取沪深300成分股，共 {len(code2name)} 只"
     except Exception as e:
-        st.error(f"获取沪深300成分股失败: {e}")
         return {}, f"获取失败: {e}"
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_individual_info(symbol):
-    """获取个股基本信息：行业、主营业务等"""
     try:
         df = ak.stock_individual_info_em(symbol=symbol)
-        info_dict = dict(zip(df["item"], df["value"]))
-        return info_dict
+        return dict(zip(df["item"], df["value"]))
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_financial_indicators(symbol):
-    """获取个股财务分析指标"""
     try:
-        df = ak.stock_financial_analysis_indicator_em(symbol=symbol)
-        return df
+        return ak.stock_financial_analysis_indicator_em(symbol=symbol)
     except Exception:
         return None
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_stock_main_business(symbol):
-    """获取个股主营业务信息"""
+def get_stock_financial_report_sina(stock, symbol_type):
+    """获取新浪财经三大财务报表"""
     try:
-        df = ak.stock_main_business_em(symbol=symbol)
-        return df
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_stock_dividend_history(symbol):
-    """获取个股分红历史"""
-    try:
-        df = ak.stock_dividend_cninfo(symbol=symbol)
+        prefix = "sh" if str(stock).startswith("6") else "sz"
+        stock_code = f"{prefix}{stock}"
+        df = ak.stock_financial_report_sina(stock=stock_code, symbol=symbol_type)
         return df
     except Exception:
         return None
@@ -282,12 +200,10 @@ def get_stock_dividend_history(symbol):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_history_data(_stock_code, _stock_name, start_date, end_date):
-    """获取单只股票历史日线数据"""
     try:
         code_str = str(_stock_code).zfill(6)
         df = ak.stock_zh_a_hist(
-            symbol=code_str,
-            period="daily",
+            symbol=code_str, period="daily",
             start_date=start_date.replace("-", ""),
             end_date=end_date.replace("-", ""),
             adjust="qfq"
@@ -301,7 +217,6 @@ def get_stock_history_data(_stock_code, _stock_name, start_date, end_date):
             "成交额": "成交额", "振幅": "振幅", "涨跌额": "涨跌额",
             "换手率": "换手率", "涨跌幅": "涨跌幅"
         })
-
         df["股票代码"] = _stock_code
         df["股票名称"] = _stock_name
         df["日期"] = pd.to_datetime(df["日期"])
@@ -318,7 +233,6 @@ def get_stock_history_data(_stock_code, _stock_name, start_date, end_date):
 
 
 def fetch_all_hs300_data(code2name, start_date, end_date, progress_bar, status_text):
-    """批量获取沪深300成分股数据"""
     all_data = []
     total = len(code2name)
     success = 0
@@ -349,57 +263,214 @@ def fetch_all_hs300_data(code2name, start_date, end_date, progress_bar, status_t
     return None, "未能获取到有效数据"
 
 
-# ===================== 基本面分析函数 =====================
-def classify_industry(industry_name):
-    """将行业归类到大类"""
-    if not industry_name:
-        return "其他"
-    industry_name = str(industry_name)
-    for category, keywords in INDUSTRY_CATEGORIES.items():
-        for kw in keywords:
-            if kw in industry_name:
-                return category
-    return "其他"
-
-
-def get_stock_fundamentals_batch(stock_codes):
-    """批量获取多只股票的基本面信息"""
-    fundamentals = {}
-    for code in stock_codes:
-        code_str = str(code).zfill(6)
-        try:
-            info = get_stock_individual_info(code_str)
-            fundamentals[code] = {
-                "行业": info.get("行业", "未知"),
-                "总股本": info.get("总股本", 0),
-                "总市值": info.get("总市值", 0),
-                "流通市值": info.get("流通市值", 0),
-                "上市时间": info.get("上市时间", ""),
-            }
-        except Exception:
-            fundamentals[code] = {"行业": "未知", "总股本": 0, "总市值": 0, "流通市值": 0, "上市时间": ""}
-    return fundamentals
-
-
-def calc_ddm_valuation(stock_code, stock_name, close_price, fin_df):
+# ===================== 绝对估值法: DCF模型 =====================
+def calc_dcf_valuation(symbol, close_price, fin_df):
     """
-    DDM股利贴现模型估值
-    使用戈登增长模型: V = D1 / (r - g)
-    其中: D1 = 下一年预期每股股利, r = 折现率, g = 永续增长率
+    DCF现金流折现模型 (两阶段模型)
+    企业价值 = 预测期FCFF现值 + 终值现值
     """
     try:
-        # 从财务指标获取关键数据
+        # 尝试从财务指标获取关键数据
+        revenue = 0
+        net_profit = 0
+        operating_cashflow = 0
+        total_assets = 0
+        total_equity = 0
+        total_liab = 0
+        roe = 0
+        debt_to_assets = 0
+
         if fin_df is not None and not fin_df.empty:
             latest = fin_df.iloc[0] if isinstance(fin_df.iloc[0], pd.Series) else fin_df.iloc[-1]
+            for col in fin_df.columns:
+                col_str = str(col).lower()
+                if any(k in col_str for k in ["营业收入", "营业总收入", "revenue", "total revenue"]):
+                    try:
+                        revenue = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净利润", "归母净利润", "net profit", "net income"]):
+                    try:
+                        net_profit = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["经营现金流", "经营活动现金流", "operating cash flow", "ocf"]):
+                    try:
+                        operating_cashflow = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["总资产", "资产总计", "total assets"]):
+                    try:
+                        total_assets = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净资产", "所有者权益", "股东权益", "total equity"]):
+                    try:
+                        total_equity = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["总负债", "负债合计", "total liabilities"]):
+                    try:
+                        total_liab = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "净资产收益率" in str(col) or "roe" in col_str:
+                    try:
+                        roe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "资产负债率" in str(col) or "debt_to_assets" in col_str:
+                    try:
+                        debt_to_assets = float(fin_df[col].iloc[0])
+                    except:
+                        pass
 
-            # 获取EPS和ROE
+        # 获取个股信息用于计算
+        info = get_stock_individual_info(symbol)
+        total_shares = 0
+        try:
+            total_shares_str = str(info.get("总股本", "0")).replace(",", "").replace("万股", "").replace("亿", "")
+            total_shares = float(total_shares_str)
+            if total_shares > 1000000:  # 如果是股数
+                total_shares = total_shares / 10000  # 转为万股
+        except:
+            total_shares = close_price * 100  # 估算
+
+        # 估算自由现金流 (FCFF)
+        # FCFF = 净利润 + 折旧摊销 - 资本支出 - 营运资本变动
+        # 简化: 使用经营现金流 - 资本支出
+        if operating_cashflow != 0:
+            fcff = operating_cashflow * 0.7  # 假设资本支出占经营现金流的30%
+        elif net_profit != 0:
+            fcff = net_profit * 0.6  # 假设FCFF为净利润的60%
+        else:
+            fcff = close_price * total_shares * 0.05  # 用市值估算
+
+        # 计算WACC (加权平均资本成本)
+        risk_free_rate = 0.025
+        market_risk_premium = 0.06
+        beta = 1.0
+        cost_of_equity = risk_free_rate + beta * market_risk_premium  # 约8.5%
+
+        if debt_to_assets > 0 and total_liab > 0:
+            debt_ratio = debt_to_assets / 100 if debt_to_assets > 1 else debt_to_assets
+        else:
+            debt_ratio = 0.4  # 默认40%负债率
+
+        cost_of_debt = 0.04  # 假设债务成本4%
+        tax_rate = 0.25
+
+        wacc = cost_of_equity * (1 - debt_ratio) + cost_of_debt * (1 - tax_rate) * debt_ratio
+
+        # 增长率假设
+        if roe > 0:
+            growth_rate_high = min(roe / 100 * 0.5, 0.15)  # 高增长期
+            growth_rate_stable = min(roe / 100 * 0.2, 0.03)  # 永续增长期
+        else:
+            growth_rate_high = 0.08
+            growth_rate_stable = 0.025
+
+        # 两阶段DCF计算
+        # 第一阶段: 5年高增长期
+        forecast_years = 5
+        fcff_list = []
+        pv_list = []
+        current_fcff = fcff
+
+        for year in range(1, forecast_years + 1):
+            current_fcff = current_fcff * (1 + growth_rate_high)
+            pv = current_fcff / ((1 + wacc) ** year)
+            fcff_list.append(current_fcff)
+            pv_list.append(pv)
+
+        pv_forecast = sum(pv_list)
+
+        # 第二阶段: 永续增长期 (终值)
+        terminal_fcff = fcff_list[-1] * (1 + growth_rate_stable)
+        terminal_value = terminal_fcff / (wacc - growth_rate_stable)
+        pv_terminal = terminal_value / ((1 + wacc) ** forecast_years)
+
+        # 企业价值
+        enterprise_value = pv_forecast + pv_terminal
+
+        # 股权价值 = 企业价值 - 净债务
+        if total_liab > 0 and total_assets > 0:
+            cash = total_assets - total_liab - total_equity if total_equity > 0 else 0
+            net_debt = total_liab - max(cash, 0)
+        else:
+            net_debt = enterprise_value * 0.3  # 估算
+
+        equity_value = enterprise_value - net_debt
+
+        # 每股内在价值
+        if total_shares > 0:
+            intrinsic_value_per_share = equity_value / total_shares
+        else:
+            intrinsic_value_per_share = close_price
+
+        # 估值判断
+        premium = (close_price - intrinsic_value_per_share) / intrinsic_value_per_share * 100
+
+        if premium < -20:
+            valuation = "严重低估"
+            color = "#16a34a"
+        elif premium < -5:
+            valuation = "低估"
+            color = "#22c55e"
+        elif premium < 5:
+            valuation = "合理"
+            color = "#f59e0b"
+        elif premium < 20:
+            valuation = "高估"
+            color = "#f97316"
+        else:
+            valuation = "严重高估"
+            color = "#dc2626"
+
+        return {
+            "内在价值": round(intrinsic_value_per_share, 2),
+            "当前价格": round(close_price, 2),
+            "估值溢价": round(premium, 2),
+            "估值判断": valuation,
+            "估值颜色": color,
+            "企业价值": round(enterprise_value / 100000000, 2),  # 亿元
+            "股权价值": round(equity_value / 100000000, 2),  # 亿元
+            "WACC": round(wacc * 100, 2),
+            "高增长期增长率": round(growth_rate_high * 100, 2),
+            "永续增长率": round(growth_rate_stable * 100, 2),
+            "预测期FCFF现值": round(pv_forecast / 100000000, 2),  # 亿元
+            "终值现值": round(pv_terminal / 100000000, 2),  # 亿元
+            "FCFF": round(fcff / 100000000, 2),  # 亿元
+            "ROE": round(roe, 2) if roe else "N/A",
+            "净利润": round(net_profit / 100000000, 2) if net_profit else "N/A",  # 亿元
+            "经营现金流": round(operating_cashflow / 100000000, 2) if operating_cashflow else "N/A",  # 亿元
+        }
+    except Exception:
+        pass
+
+    return {
+        "内在价值": round(close_price, 2),
+        "当前价格": round(close_price, 2),
+        "估值溢价": 0,
+        "估值判断": "数据不足",
+        "估值颜色": "#64748b",
+        "企业价值": "N/A", "股权价值": "N/A",
+        "WACC": "N/A", "高增长期增长率": "N/A", "永续增长率": "N/A",
+        "预测期FCFF现值": "N/A", "终值现值": "N/A",
+        "FCFF": "N/A", "ROE": "N/A", "净利润": "N/A", "经营现金流": "N/A"
+    }
+
+
+# ===================== 绝对估值法: DDM模型 =====================
+def calc_ddm_valuation(close_price, fin_df):
+    try:
+        if fin_df is not None and not fin_df.empty:
             eps = 0
             roe = 0
             pe = 0
             pb = 0
             dividend_yield = 0
 
-            # 尝试从财务数据中提取
             for col in fin_df.columns:
                 col_str = str(col).lower()
                 if "每股收益" in str(col) or "eps" in col_str:
@@ -428,63 +499,54 @@ def calc_ddm_valuation(stock_code, stock_name, close_price, fin_df):
                     except:
                         pass
 
-            # 如果无法获取EPS，用股价/PE估算
             if eps <= 0 and pe > 0:
                 eps = close_price / pe
             if eps <= 0:
-                eps = close_price * 0.05  # 默认5%收益率
+                eps = close_price * 0.05
 
-            # 分红率估算（沪深300平均约30%）
             payout_ratio = 0.30
-
-            # 每股股利
             dps = eps * payout_ratio
 
-            # 折现率 r = 无风险利率 + 风险溢价
-            risk_free_rate = 0.025  # 10年期国债收益率约2.5%
-            market_risk_premium = 0.06  # 市场风险溢价约6%
-            beta = 1.0  # 沪深300成分股beta约1
-            r = risk_free_rate + beta * market_risk_premium  # 约8.5%
+            risk_free_rate = 0.025
+            market_risk_premium = 0.06
+            beta = 1.0
+            r = risk_free_rate + beta * market_risk_premium
 
-            # 永续增长率 g = ROE * (1 - 分红率)
             if roe > 0:
                 g = roe / 100 * (1 - payout_ratio)
             else:
-                g = 0.03  # 默认3%增长率
+                g = 0.03
+            g = min(g, r * 0.8)
 
-            g = min(g, r * 0.8)  # 确保 g < r
-
-            # 戈登增长模型
             if r > g and dps > 0:
                 intrinsic_value = dps * (1 + g) / (r - g)
             else:
-                intrinsic_value = close_price  # 无法计算时返回当前价
+                intrinsic_value = close_price
 
-            # 估值判断
             premium = (close_price - intrinsic_value) / intrinsic_value * 100
 
             if premium < -20:
                 valuation = "严重低估"
-                valuation_color = "#16a34a"
+                color = "#16a34a"
             elif premium < -5:
                 valuation = "低估"
-                valuation_color = "#22c55e"
+                color = "#22c55e"
             elif premium < 5:
                 valuation = "合理"
-                valuation_color = "#f59e0b"
+                color = "#f59e0b"
             elif premium < 20:
                 valuation = "高估"
-                valuation_color = "#f97316"
+                color = "#f97316"
             else:
                 valuation = "严重高估"
-                valuation_color = "#dc2626"
+                color = "#dc2626"
 
             return {
                 "内在价值": round(intrinsic_value, 2),
                 "当前价格": round(close_price, 2),
                 "估值溢价": round(premium, 2),
                 "估值判断": valuation,
-                "估值颜色": valuation_color,
+                "估值颜色": color,
                 "每股股利": round(dps, 3),
                 "折现率": round(r * 100, 2),
                 "永续增长率": round(g * 100, 2),
@@ -497,27 +559,176 @@ def calc_ddm_valuation(stock_code, stock_name, close_price, fin_df):
     except Exception:
         pass
 
-    # 默认返回
     return {
         "内在价值": round(close_price, 2),
         "当前价格": round(close_price, 2),
         "估值溢价": 0,
         "估值判断": "数据不足",
         "估值颜色": "#64748b",
-        "每股股利": "N/A",
-        "折现率": "N/A",
-        "永续增长率": "N/A",
-        "ROE": "N/A",
-        "EPS": "N/A",
-        "PE": "N/A",
-        "PB": "N/A",
-        "股息率": "N/A"
+        "每股股利": "N/A", "折现率": "N/A", "永续增长率": "N/A",
+        "ROE": "N/A", "EPS": "N/A", "PE": "N/A", "PB": "N/A", "股息率": "N/A"
     }
 
 
-# ===================== 技术分析函数 =====================
+# ===================== 相对估值法 =====================
+def calc_relative_valuation(symbol, close_price, fin_df, industry):
+    """
+    相对估值法: PE/PB/PS/EV/EBITDA
+    与行业均值对比判断估值水平
+    """
+    try:
+        pe = 0
+        pb = 0
+        ps = 0
+        ev_ebitda = 0
+        roe = 0
+        revenue = 0
+        net_profit = 0
+        total_equity = 0
+
+        if fin_df is not None and not fin_df.empty:
+            for col in fin_df.columns:
+                col_str = str(col).lower()
+                if "市盈率" in str(col) or "pe" in col_str:
+                    try:
+                        pe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市净率" in str(col) or "pb" in col_str:
+                    try:
+                        pb = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市销率" in str(col) or "ps" in col_str:
+                    try:
+                        ps = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "ev/ebitda" in col_str or "企业价值倍数" in str(col):
+                    try:
+                        ev_ebitda = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "净资产收益率" in str(col) or "roe" in col_str:
+                    try:
+                        roe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["营业收入", "营业总收入", "revenue"]):
+                    try:
+                        revenue = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净利润", "归母净利润", "net profit"]):
+                    try:
+                        net_profit = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+
+        # 计算PS (如果未获取到)
+        if ps <= 0 and revenue > 0:
+            info = get_stock_individual_info(symbol)
+            total_shares = 0
+            try:
+                total_shares_str = str(info.get("总股本", "0")).replace(",", "").replace("万股", "").replace("亿", "")
+                total_shares = float(total_shares_str)
+                if total_shares > 1000000:
+                    total_shares = total_shares / 10000
+            except:
+                total_shares = close_price * 100
+
+            market_cap = close_price * total_shares  # 万元
+            if market_cap > 0 and revenue > 0:
+                ps = market_cap / revenue
+
+        # 行业基准估值 (基于A股历史数据的大致范围)
+        industry_benchmarks = {
+            "金融": {"pe": [6, 12], "pb": [0.8, 1.5], "ps": [2, 5]},
+            "消费": {"pe": [20, 40], "pb": [3, 8], "ps": [2, 6]},
+            "医药": {"pe": [25, 50], "pb": [3, 8], "ps": [3, 10]},
+            "科技": {"pe": [30, 60], "pb": [4, 10], "ps": [4, 15]},
+            "新能源": {"pe": [20, 40], "pb": [2, 6], "ps": [2, 8]},
+            "制造": {"pe": [12, 25], "pb": [1.5, 3.5], "ps": [1, 4]},
+            "材料": {"pe": [10, 20], "pb": [1, 2.5], "ps": [0.5, 3]},
+            "基建": {"pe": [8, 18], "pb": [0.8, 2], "ps": [0.3, 2]},
+            "能源": {"pe": [8, 15], "pb": [1, 2], "ps": [1, 4]},
+            "物流": {"pe": [10, 20], "pb": [1, 2.5], "ps": [0.5, 3]},
+            "其他": {"pe": [15, 30], "pb": [1.5, 4], "ps": [1, 5]}
+        }
+
+        category = classify_industry(industry)
+        bench = industry_benchmarks.get(category, industry_benchmarks["其他"])
+
+        # 判断各指标估值水平
+        def judge_ratio(value, low, high):
+            if value <= 0:
+                return "N/A", "#64748b"
+            if value < low * 0.7:
+                return "显著低估", "#16a34a"
+            elif value < low:
+                return "低估", "#22c55e"
+            elif value <= high:
+                return "合理", "#f59e0b"
+            elif value <= high * 1.3:
+                return "高估", "#f97316"
+            else:
+                return "显著高估", "#dc2626"
+
+        pe_judge, pe_color = judge_ratio(pe, bench["pe"][0], bench["pe"][1])
+        pb_judge, pb_color = judge_ratio(pb, bench["pb"][0], bench["pb"][1])
+        ps_judge, ps_color = judge_ratio(ps, bench["ps"][0], bench["ps"][1])
+
+        # 综合相对估值判断
+        judges = [j for j in [pe_judge, pb_judge, ps_judge] if j != "N/A"]
+        if judges:
+            under_count = sum(1 for j in judges if "低估" in j)
+            over_count = sum(1 for j in judges if "高估" in j)
+            if under_count >= 2:
+                overall = "低估"
+                overall_color = "#16a34a"
+            elif over_count >= 2:
+                overall = "高估"
+                overall_color = "#dc2626"
+            else:
+                overall = "合理"
+                overall_color = "#f59e0b"
+        else:
+            overall = "数据不足"
+            overall_color = "#64748b"
+
+        return {
+            "PE": round(pe, 2) if pe > 0 else "N/A",
+            "PE判断": pe_judge,
+            "PE颜色": pe_color,
+            "PB": round(pb, 2) if pb > 0 else "N/A",
+            "PB判断": pb_judge,
+            "PB颜色": pb_color,
+            "PS": round(ps, 2) if ps > 0 else "N/A",
+            "PS判断": ps_judge,
+            "PS颜色": ps_color,
+            "EV/EBITDA": round(ev_ebitda, 2) if ev_ebitda > 0 else "N/A",
+            "行业": category,
+            "行业PE区间": f"{bench['pe'][0]}-{bench['pe'][1]}",
+            "行业PB区间": f"{bench['pb'][0]}-{bench['pb'][1]}",
+            "行业PS区间": f"{bench['ps'][0]}-{bench['ps'][1]}",
+            "综合判断": overall,
+            "综合颜色": overall_color
+        }
+    except Exception:
+        pass
+
+    return {
+        "PE": "N/A", "PE判断": "N/A", "PE颜色": "#64748b",
+        "PB": "N/A", "PB判断": "N/A", "PB颜色": "#64748b",
+        "PS": "N/A", "PS判断": "N/A", "PS颜色": "#64748b",
+        "EV/EBITDA": "N/A", "行业": "其他",
+        "行业PE区间": "N/A", "行业PB区间": "N/A", "行业PS区间": "N/A",
+        "综合判断": "数据不足", "综合颜色": "#64748b"
+    }
+
+
+# ===================== 技术指标计算 =====================
 def calc_technical_indicators(df):
-    """计算技术指标"""
     df = df.copy()
     df["MA5"] = df["收盘"].rolling(5).mean()
     df["MA10"] = df["收盘"].rolling(10).mean()
@@ -546,8 +757,131 @@ def calc_technical_indicators(df):
     return df
 
 
+# ===================== 多因子评分模型 =====================
+def calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df):
+    scores = {}
+
+    # 1. 价值因子 (30%) - 基于DDM+DCF+相对估值
+    value_score = 50
+    if ddm["估值判断"] in ["严重低估", "低估"]:
+        value_score += 25
+    elif ddm["估值判断"] == "合理":
+        value_score += 10
+    elif ddm["估值判断"] in ["高估", "严重高估"]:
+        value_score -= 20
+
+    if dcf["估值判断"] in ["严重低估", "低估"]:
+        value_score += 15
+    elif dcf["估值判断"] in ["高估", "严重高估"]:
+        value_score -= 10
+
+    if relative["综合判断"] in ["显著低估", "低估"]:
+        value_score += 10
+    elif relative["综合判断"] in ["高估", "显著高估"]:
+        value_score -= 10
+
+    scores["价值因子"] = min(max(value_score, 0), 100)
+
+    # 2. 动量因子 (25%)
+    close = s_df["收盘"].values
+    ret_5d = (close[-1] / close[-6] - 1) * 100 if len(close) >= 6 else 0
+    ret_20d = (close[-1] / close[-21] - 1) * 100 if len(close) >= 21 else 0
+    ret_60d = (close[-1] / close[-61] - 1) * 100 if len(close) >= 61 else 0
+
+    momentum_score = 50
+    if ret_20d > 10:
+        momentum_score += 25
+    elif ret_20d > 5:
+        momentum_score += 15
+    elif ret_20d > 0:
+        momentum_score += 5
+    elif ret_20d < -10:
+        momentum_score -= 20
+    elif ret_20d < -5:
+        momentum_score -= 10
+
+    if ret_5d > 5:
+        momentum_score += 5
+    elif ret_5d < -5:
+        momentum_score -= 5
+
+    scores["动量因子"] = min(max(momentum_score, 0), 100)
+
+    # 3. 质量因子 (25%)
+    quality_score = 50
+    roe = 0
+    if fin_df is not None and not fin_df.empty:
+        for col in fin_df.columns:
+            if "净资产收益率" in str(col) or "roe" in str(col).lower():
+                try:
+                    roe = float(fin_df[col].iloc[0])
+                except:
+                    pass
+
+    if roe > 0:
+        if roe > 20:
+            quality_score += 30
+        elif roe > 15:
+            quality_score += 20
+        elif roe > 10:
+            quality_score += 10
+        elif roe < 5:
+            quality_score -= 20
+
+    volatility = s_df["涨跌幅"].iloc[-60:].std() * np.sqrt(252) if len(s_df) >= 60 else 0
+    if volatility > 50:
+        quality_score -= 15
+    elif volatility < 20:
+        quality_score += 10
+
+    scores["质量因子"] = min(max(quality_score, 0), 100)
+
+    # 4. 趋势因子 (20%)
+    s_df_ind = calc_technical_indicators(s_df)
+    ma5 = s_df_ind["MA5"].iloc[-1]
+    ma10 = s_df_ind["MA10"].iloc[-1]
+    ma20 = s_df_ind["MA20"].iloc[-1]
+    ma60 = s_df_ind["MA60"].iloc[-1]
+
+    trend_score = 50
+    if ma5 > ma10 > ma20 > ma60:
+        trend_score = 100
+    elif ma5 > ma10 > ma20:
+        trend_score = 80
+    elif ma5 > ma10:
+        trend_score = 60
+    elif ma5 < ma10 < ma20 < ma60:
+        trend_score = 20
+    elif ma5 < ma10 < ma20:
+        trend_score = 30
+    elif ma5 < ma10:
+        trend_score = 40
+
+    if s_df_ind["DIF"].iloc[-1] > s_df_ind["DEA"].iloc[-1]:
+        trend_score += 5
+    else:
+        trend_score -= 5
+
+    scores["趋势因子"] = min(max(trend_score, 0), 100)
+
+    # 综合评分
+    total_score = (
+        scores["价值因子"] * 0.30 +
+        scores["动量因子"] * 0.25 +
+        scores["质量因子"] * 0.25 +
+        scores["趋势因子"] * 0.20
+    )
+
+    scores["综合评分"] = round(total_score, 2)
+    scores["20日涨幅"] = round(ret_20d, 2)
+    scores["60日涨幅"] = round(ret_60d, 2)
+    scores["年化波动率"] = round(volatility, 2)
+
+    return scores
+
+
+# ===================== 蒙特卡洛预测 =====================
 def calc_monte_carlo_prediction(df, predict_days=30):
-    """蒙特卡洛模拟价格预测"""
     close_prices = df["收盘"].values
     returns = np.diff(np.log(close_prices))
     last_price = close_prices[-1]
@@ -585,138 +919,78 @@ def calc_monte_carlo_prediction(df, predict_days=30):
     return pred_df
 
 
-# ===================== 选股策略函数 =====================
-def stock_filter_and_pick(df, strategy, code2name, fundamentals=None):
-    """根据策略筛选5只个股 + 生成预测和估值数据"""
+# ===================== 智能选股 =====================
+def stock_filter_and_pick(df, code2name):
     stock_list = df["股票代码"].unique()
     metrics = []
-
-    # 批量获取基本面信息
-    if fundamentals is None:
-        fundamentals = get_stock_fundamentals_batch(stock_list[:50])
 
     for code in stock_list:
         s_df = df[df["股票代码"] == code].sort_values("日期").reset_index(drop=True)
         if len(s_df) < 60:
             continue
 
-        s_df = calc_technical_indicators(s_df)
         close = s_df["收盘"].iloc[-1]
-
-        ret20 = (close - s_df["收盘"].iloc[-21]) / s_df["收盘"].iloc[-21] if len(s_df) >= 21 else 0
-        ret60 = (close - s_df["收盘"].iloc[-61]) / s_df["收盘"].iloc[-61] if len(s_df) >= 61 else 0
-        vol = s_df["换手率"].iloc[-20:].mean()
-        std = s_df["涨跌幅"].iloc[-20:].std()
-
-        ma5 = s_df["MA5"].iloc[-1]
-        ma10 = s_df["MA10"].iloc[-1]
-        ma20 = s_df["MA20"].iloc[-1]
-
-        if ma5 > ma10 > ma20:
-            trend = 1
-        elif ma5 < ma10 < ma20:
-            trend = -1
-        else:
-            trend = 0
-
-        macd_signal = 1 if s_df["DIF"].iloc[-1] > s_df["DEA"].iloc[-1] else -1
-        rsi = s_df["RSI"].iloc[-1] if not np.isnan(s_df["RSI"].iloc[-1]) else 50
-
-        # 获取基本面
-        fund = fundamentals.get(code, {})
-        industry = fund.get("行业", "未知")
-        category = classify_industry(industry)
-
-        # 获取财务指标和DDM估值
         code_str = str(code).zfill(6)
+        info = get_stock_individual_info(code_str)
         fin_df = get_stock_financial_indicators(code_str)
-        ddm = calc_ddm_valuation(code, code2name.get(code, ""), close, fin_df)
+        ddm = calc_ddm_valuation(close, fin_df)
+        dcf = calc_dcf_valuation(code_str, close, fin_df)
+        relative = calc_relative_valuation(code_str, close, fin_df, info.get("行业", ""))
+        factor_scores = calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df)
 
-        # 综合评分
-        score = 0
-        score += trend * 20
-        score += macd_signal * 15
-        if 30 <= rsi <= 70:
-            score += 10
-        elif rsi < 30:
-            score += 15
-        score -= std * 100
-
-        # DDM估值加分
-        if ddm["估值判断"] == "严重低估":
-            score += 30
-        elif ddm["估值判断"] == "低估":
-            score += 20
-        elif ddm["估值判断"] == "合理":
-            score += 10
+        industry = info.get("行业", "未知")
+        category = classify_industry(industry)
 
         metrics.append({
             "股票代码": code,
             "股票名称": code2name.get(code, "未知"),
             "最新价": close,
-            "20日涨幅": ret20 * 100,
-            "60日涨幅": ret60 * 100,
-            "波动率": std,
-            "均线趋势": trend,
-            "MACD信号": macd_signal,
-            "RSI": rsi,
-            "综合评分": score,
             "行业": industry,
             "行业大类": category,
-            "技术数据": s_df,
+            "综合评分": factor_scores["综合评分"],
+            "价值因子": factor_scores["价值因子"],
+            "动量因子": factor_scores["动量因子"],
+            "质量因子": factor_scores["质量因子"],
+            "趋势因子": factor_scores["趋势因子"],
+            "20日涨幅": factor_scores["20日涨幅"],
+            "60日涨幅": factor_scores["60日涨幅"],
+            "年化波动率": factor_scores["年化波动率"],
             "DDM估值": ddm,
-            "财务数据": fin_df
+            "DCF估值": dcf,
+            "相对估值": relative,
+            "技术数据": s_df,
         })
 
     if len(metrics) < 5:
         return None, "有效个股不足5只，无法完成选股"
 
     m_df = pd.DataFrame(metrics)
-
-    if "价值投资" in strategy:
-        # 价值投资：优先DDM低估+低波动+稳定
-        m_df = m_df.sort_values(["综合评分", "波动率"], ascending=[False, True])
-    elif "趋势追涨" in strategy:
-        trend_df = m_df[m_df["均线趋势"] == 1]
-        if len(trend_df) >= 5:
-            m_df = trend_df.sort_values("综合评分", ascending=False)
-        else:
-            m_df = m_df.sort_values("综合评分", ascending=False)
-    else:
-        oversold = m_df[m_df["RSI"] < 40]
-        if len(oversold) >= 5:
-            m_df = oversold.sort_values("综合评分", ascending=False)
-        else:
-            m_df = m_df.sort_values("20日涨幅", ascending=True)
-
+    m_df = m_df.sort_values("综合评分", ascending=False)
     selected = m_df.head(5).reset_index(drop=True)
+
     res = []
     today = datetime.now()
-    cfg = STRATEGY_DICT[strategy]
 
     for i, row in selected.iterrows():
         s_df = row["技术数据"]
         cur_price = row["最新价"]
         ddm = row["DDM估值"]
+        dcf = row["DCF估值"]
+        relative = row["相对估值"]
 
         hist_vol = s_df["涨跌幅"].iloc[-60:].std() if len(s_df) >= 60 else s_df["涨跌幅"].std()
         avg_daily_ret = s_df["涨跌幅"].iloc[-20:].mean()
 
-        hold = np.random.randint(*cfg["hold_days"])
-        ret = min(max(np.random.normal(avg_daily_ret * hold, hist_vol * np.sqrt(hold)),
-                       cfg["target_return"][0] * 0.5),
-                   cfg["target_return"][1] * 1.2)
-        ret = max(ret, 0.01)
+        expected_ret = avg_daily_ret * 30
+        expected_ret = max(min(expected_ret, 0.25), -0.15)
 
-        cap = round(np.random.uniform(*cfg["capital_ratio"]), 1)
-        buy = round(cur_price * np.random.uniform(0.97, 1.00), 2)
-        sell = round(buy * (1 + ret), 2)
+        hold = 30
+        buy = round(cur_price * 0.98, 2)
+        sell = round(buy * (1 + expected_ret), 2)
         sell_dt = (today + timedelta(days=hold)).strftime("%Y-%m-%d")
 
-        pred_df = calc_monte_carlo_prediction(s_df, predict_days=min(hold + 10, 60))
-
-        # 生成投资建议
-        advice = generate_investment_advice(row, ddm, strategy)
+        pred_df = calc_monte_carlo_prediction(s_df, predict_days=60)
+        advice = generate_investment_advice(row, ddm, dcf, relative, s_df)
 
         res.append({
             "序号": i + 1,
@@ -724,74 +998,86 @@ def stock_filter_and_pick(df, strategy, code2name, fundamentals=None):
             "股票名称": row["股票名称"],
             "最新收盘价": round(cur_price, 2),
             "建议买入价": buy,
-            "资金占比": cap,
             "预期卖出价": sell,
-            "预期收益率": round(ret * 100, 2),
+            "预期收益率": round(expected_ret * 100, 2),
             "预期卖出日": sell_dt,
             "持有天数": hold,
-            "分批卖出": "是" if cfg["batch_sell"] else "否",
-            "卖出比例": str(cfg["sell_ratio"]),
-            "RSI": round(row["RSI"], 2),
-            "均线趋势": "多头排列" if row["均线趋势"] == 1 else ("空头排列" if row["均线趋势"] == -1 else "震荡"),
-            "MACD信号": "金叉" if row["MACD信号"] == 1 else "死叉",
-            "综合评分": round(row["综合评分"], 2),
+            "综合评分": row["综合评分"],
+            "价值因子": row["价值因子"],
+            "动量因子": row["动量因子"],
+            "质量因子": row["质量因子"],
+            "趋势因子": row["趋势因子"],
+            "20日涨幅": row["20日涨幅"],
+            "60日涨幅": row["60日涨幅"],
+            "年化波动率": row["年化波动率"],
             "行业": row["行业"],
             "行业大类": row["行业大类"],
             "DDM估值": ddm,
+            "DCF估值": dcf,
+            "相对估值": relative,
             "投资建议": advice,
             "K线数据": s_df.tail(120),
             "预测数据": pred_df
         })
 
-    total = sum(x["资金占比"] for x in res)
-    for x in res:
-        x["资金占比"] = round(x["资金占比"] / total * 100, 1)
-
-    return res, f"选股完成，共筛选出5只优质个股（策略: {strategy}）"
+    return res, f"多因子选股完成，共筛选出5只优质个股"
 
 
-def generate_investment_advice(row, ddm, strategy):
-    """根据股票特征生成个性化投资建议"""
+def generate_investment_advice(row, ddm, dcf, relative, s_df):
     advice_list = []
     risk_notes = []
 
-    # 基于DDM估值的建议
+    score = row["综合评分"]
+    if score >= 80:
+        suitability = "强烈推荐"
+        suit_color = "#16a34a"
+    elif score >= 65:
+        suitability = "推荐"
+        suit_color = "#22c55e"
+    elif score >= 50:
+        suitability = "中性"
+        suit_color = "#f59e0b"
+    else:
+        suitability = "谨慎"
+        suit_color = "#dc2626"
+
+    # DDM建议
     if ddm["估值判断"] in ["严重低估", "低估"]:
-        advice_list.append(f"DDM估值显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，当前价格具备安全边际")
+        advice_list.append(f"DDM股利贴现模型显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，当前价格具备安全边际")
     elif ddm["估值判断"] in ["高估", "严重高估"]:
-        risk_notes.append(f"DDM估值显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，注意估值回调风险")
-    else:
-        advice_list.append("DDM估值显示当前价格合理，建议关注基本面变化")
+        risk_notes.append(f"DDM模型显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，注意估值回调风险")
 
-    # 基于技术面的建议
-    rsi = row["RSI"]
-    if rsi < 30:
-        advice_list.append(f"RSI={rsi:.1f}处于超卖区域，短期可能存在反弹机会")
-    elif rsi > 70:
-        risk_notes.append(f"RSI={rsi:.1f}处于超买区域，注意短期回调风险")
+    # DCF建议
+    if dcf["估值判断"] in ["严重低估", "低估"]:
+        advice_list.append(f"DCF现金流折现模型显示该股票{dcf['估值判断']}，企业价值约{dcf['企业价值']}亿元，具备投资价值")
+    elif dcf["估值判断"] in ["高估", "严重高估"]:
+        risk_notes.append(f"DCF模型显示该股票{dcf['估值判断']}，企业价值约{dcf['企业价值']}亿元，注意估值风险")
 
-    trend = row["均线趋势"]
-    if trend == 1:
-        advice_list.append("均线多头排列，中期趋势向好")
-    elif trend == -1:
-        risk_notes.append("均线空头排列，中期趋势偏弱")
+    # 相对估值建议
+    if relative["综合判断"] in ["显著低估", "低估"]:
+        advice_list.append(f"相对估值法(PE/PB/PS)显示该股票{relative['综合判断']}，低于行业平均水平")
+    elif relative["综合判断"] in ["高估", "显著高估"]:
+        risk_notes.append(f"相对估值法显示该股票{relative['综合判断']}，高于行业平均水平")
 
-    macd = row["MACD信号"]
-    if macd == 1:
-        advice_list.append("MACD金叉信号，动能转强")
-    else:
-        risk_notes.append("MACD死叉信号，动能转弱")
+    # 因子分析
+    if row["价值因子"] >= 80:
+        advice_list.append(f"价值因子得分{row['价值因子']:.0f}分，估值优势明显")
+    if row["动量因子"] >= 80:
+        advice_list.append(f"动量因子得分{row['动量因子']:.0f}分，近期走势强劲")
+    elif row["动量因子"] <= 30:
+        risk_notes.append(f"动量因子得分{row['动量因子']:.0f}分，近期走势偏弱")
+    if row["质量因子"] >= 80:
+        advice_list.append(f"质量因子得分{row['质量因子']:.0f}分，财务质量优良")
+    if row["趋势因子"] >= 80:
+        advice_list.append(f"趋势因子得分{row['趋势因子']:.0f}分，技术形态良好")
+    elif row["趋势因子"] <= 30:
+        risk_notes.append(f"趋势因子得分{row['趋势因子']:.0f}分，技术形态偏弱")
 
-    # 基于策略的建议
-    if "价值投资" in strategy:
-        advice_list.append("建议分批建仓，长期持有，关注季度财报和分红政策变化")
-        advice_list.append("设置10%-15%止损线，若基本面恶化及时止损")
-    elif "趋势追涨" in strategy:
-        advice_list.append("建议在回调至支撑位时介入，避免追高")
-        advice_list.append("设置8%-10%止损线，趋势反转时果断离场")
-    else:
-        advice_list.append("快进快出，严格按目标价止盈")
-        advice_list.append("设置5%-8%止损线，控制单笔亏损")
+    # 波动率
+    if row["年化波动率"] > 40:
+        risk_notes.append(f"年化波动率{row['年化波动率']:.1f}%较高，价格波动剧烈")
+    elif row["年化波动率"] < 20:
+        advice_list.append(f"年化波动率{row['年化波动率']:.1f}%较低，价格走势稳定")
 
     # 行业建议
     category = row["行业大类"]
@@ -803,7 +1089,29 @@ def generate_investment_advice(row, ddm, strategy):
     elif category in ["消费", "医药"]:
         advice_list.append(f"{industry}板块防御性强，适合作为组合底仓")
 
+    advice_list.append("建议分批建仓，首次仓位不超过总资金的30%")
+    advice_list.append("设置8%-10%为止损线，若跌破关键支撑位果断止损")
+    advice_list.append("到达预期卖出价后分批止盈，锁定收益")
+
+    # 未来适合度
+    if score >= 70 and (ddm["估值判断"] in ["严重低估", "低估"] or dcf["估值判断"] in ["严重低估", "低估"]):
+        future_suit = "非常适合投资"
+        future_color = "#16a34a"
+    elif score >= 60:
+        future_suit = "适合投资"
+        future_color = "#22c55e"
+    elif score >= 45:
+        future_suit = "谨慎投资"
+        future_color = "#f59e0b"
+    else:
+        future_suit = "不建议投资"
+        future_color = "#dc2626"
+
     return {
+        "适合度评级": suitability,
+        "适合度颜色": suit_color,
+        "未来适合投资": future_suit,
+        "未来适合颜色": future_color,
         "买入建议": advice_list,
         "风险提示": risk_notes,
         "行业": row["行业"],
@@ -812,54 +1120,8 @@ def generate_investment_advice(row, ddm, strategy):
 
 
 # ===================== 可视化函数 =====================
-def draw_index_overview(df):
-    """绘制沪深300整体市场概览"""
-    daily_stats = df.groupby("日期").agg({
-        "收盘": "mean", "成交量": "sum", "涨跌幅": "mean",
-        "振幅": "mean", "换手率": "mean"
-    }).reset_index()
-    daily_stats["累计收益"] = (daily_stats["收盘"] / daily_stats["收盘"].iloc[0] - 1) * 100
-
-    fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.5, 0.25, 0.25],
-        specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]]
-    )
-
-    fig.add_trace(go.Scatter(
-        x=daily_stats["日期"], y=daily_stats["收盘"],
-        mode="lines", line=dict(color="#1e40af", width=2), name="平均收盘价",
-        fill="tozeroy", fillcolor="rgba(30,64,175,0.05)"
-    ), row=1, col=1, secondary_y=False)
-
-    fig.add_trace(go.Scatter(
-        x=daily_stats["日期"], y=daily_stats["累计收益"],
-        mode="lines", line=dict(color="#06b6d4", width=1.5, dash="dot"), name="累计收益(%)"
-    ), row=1, col=1, secondary_y=True)
-
-    vol_colors = ["#16a34a" if r >= 0 else "#dc2626" for r in daily_stats["涨跌幅"]]
-    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["成交量"],
-                         marker_color=vol_colors, name="成交量", opacity=0.7), row=2, col=1)
-
-    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["涨跌幅"],
-                         marker_color=vol_colors, name="平均涨跌幅(%)", opacity=0.8), row=3, col=1)
-
-    fig.update_layout(
-        title="沪深300成分股整体走势概览",
-        height=700, template="plotly_white",
-        legend=dict(orientation="h", y=1.02),
-        margin=dict(l=20, r=20, t=50, b=20),
-        xaxis_rangeslider_visible=False
-    )
-    fig.update_yaxes(title_text="平均价格", row=1, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="累计收益(%)", row=1, col=1, secondary_y=True)
-    fig.update_yaxes(title_text="成交量", row=2, col=1)
-    fig.update_yaxes(title_text="涨跌幅(%)", row=3, col=1)
-    return fig
-
-
 def draw_stock_kline(s_df, name, code):
-    """绘制个股K线+技术指标"""
+    """绘制精美个股K线+技术指标图"""
     s_df = calc_technical_indicators(s_df)
     up_color = "#dc2626"
     down_color = "#16a34a"
@@ -869,6 +1131,7 @@ def draw_stock_kline(s_df, name, code):
         row_heights=[0.45, 0.15, 0.2, 0.2]
     )
 
+    # K线 + 均线 + 布林带
     fig.add_trace(go.Candlestick(
         x=s_df["日期"], open=s_df["开盘"], high=s_df["最高"],
         low=s_df["最低"], close=s_df["收盘"],
@@ -880,20 +1143,23 @@ def draw_stock_kline(s_df, name, code):
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["BOLL_UPPER"], line=dict(color="#8b5cf6", width=1, dash="dot"), name="布林上轨", showlegend=False), row=1, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["BOLL_LOWER"], line=dict(color="#8b5cf6", width=1, dash="dot"), name="布林下轨", showlegend=False), row=1, col=1)
 
+    # 成交量
     vol_colors = [up_color if o <= c else down_color for o, c in zip(s_df["开盘"], s_df["收盘"])]
     fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["成交量"], marker_color=vol_colors, name="成交量", opacity=0.7), row=2, col=1)
 
+    # MACD
     macd_colors = ["#16a34a" if v >= 0 else "#dc2626" for v in s_df["MACD"]]
     fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["MACD"], marker_color=macd_colors, name="MACD柱", opacity=0.7), row=3, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["DIF"], line=dict(color="#1e40af", width=1.5), name="DIF"), row=3, col=1)
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["DEA"], line=dict(color="#f59e0b", width=1.5), name="DEA"), row=3, col=1)
 
+    # RSI
     fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["RSI"], line=dict(color="#8b5cf6", width=1.5), name="RSI(14)"), row=4, col=1)
     fig.add_hline(y=70, line_dash="dash", line_color="#dc2626", line_width=1, row=4, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="#16a34a", line_width=1, row=4, col=1)
 
     fig.update_layout(
-        title=f"{name}({code}) 技术分析图",
+        title=f"{name}({code}) K线技术分析图",
         height=900, template="plotly_white",
         legend=dict(orientation="h", y=1.02, font=dict(size=10)),
         margin=dict(l=20, r=20, t=50, b=20),
@@ -907,7 +1173,6 @@ def draw_stock_kline(s_df, name, code):
 
 
 def draw_prediction_chart(s_df, pred_df, name, code):
-    """绘制价格预测图"""
     fig = go.Figure()
     hist_data = s_df.tail(60)
 
@@ -942,89 +1207,75 @@ def draw_prediction_chart(s_df, pred_df, name, code):
     return fig
 
 
-def draw_correlation_heatmap(df, code2name, top_n=20):
-    """绘制个股涨跌幅相关性热力图"""
-    stock_counts = df.groupby("股票代码").size().sort_values(ascending=False).head(top_n)
-    top_codes = stock_counts.index.tolist()
+def draw_factor_radar(factor_scores):
+    categories = ["价值因子", "动量因子", "质量因子", "趋势因子"]
+    values = [factor_scores.get(k, 0) for k in categories]
+    values += [values[0]]
 
-    pivot_df = df[df["股票代码"].isin(top_codes)].pivot_table(
-        index="日期", columns="股票代码", values="涨跌幅"
-    )
-    corr_matrix = pivot_df.corr()
-    labels = [f"{code2name.get(c, str(c))}" for c in corr_matrix.columns]
-
-    fig = go.Figure(data=go.Heatmap(
-        z=corr_matrix.values, x=labels, y=labels,
-        colorscale="RdBu_r", zmin=-1, zmax=1,
-        colorbar=dict(title="相关系数")
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values,
+        theta=categories + [categories[0]],
+        fill='toself',
+        fillcolor='rgba(30,64,175,0.2)',
+        line=dict(color='#1e40af', width=2),
+        name='因子得分'
     ))
 
     fig.update_layout(
-        title=f"沪深300成分股涨跌幅相关性热力图（Top {top_n}）",
-        height=700, template="plotly_white",
-        margin=dict(l=100, r=20, t=50, b=100),
-        xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
-        yaxis=dict(tickfont=dict(size=9))
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=False,
+        title="多因子评分雷达图",
+        height=400,
+        template="plotly_white"
     )
     return fig
 
 
-def draw_sector_analysis(df, code2name):
-    """绘制板块/行业分布分析"""
-    def classify_stock(code):
-        code_str = str(code).zfill(6)
-        prefix = code_str[0]
-        if prefix == "6":
-            return "上海主板(60xxxx)"
-        elif prefix == "0":
-            return "深圳主板(00xxxx)"
-        elif prefix == "3":
-            return "创业板(30xxxx)"
-        return "其他"
-
-    sector_data = df.copy()
-    sector_data["板块"] = sector_data["股票代码"].apply(classify_stock)
-
-    sector_stats = sector_data.groupby("板块").agg({
-        "股票代码": "nunique", "收盘": "mean", "涨跌幅": "mean",
-        "成交量": "sum", "换手率": "mean"
+def draw_index_overview(df):
+    daily_stats = df.groupby("日期").agg({
+        "收盘": "mean", "成交量": "sum", "涨跌幅": "mean",
+        "振幅": "mean", "换手率": "mean"
     }).reset_index()
-    sector_stats.columns = ["板块", "股票数量", "平均价格", "平均涨跌幅(%)", "总成交量", "平均换手率(%)"]
+    daily_stats["累计收益"] = (daily_stats["收盘"] / daily_stats["收盘"].iloc[0] - 1) * 100
 
     fig = make_subplots(
-        rows=1, cols=3,
-        specs=[[{"type": "pie"}, {"type": "bar"}, {"type": "bar"}]],
-        subplot_titles=("股票数量分布", "平均涨跌幅对比", "平均换手率对比")
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
+        row_heights=[0.5, 0.25, 0.25],
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]]
     )
 
-    fig.add_trace(go.Pie(
-        labels=sector_stats["板块"], values=sector_stats["股票数量"],
-        hole=0.4, marker_colors=["#1e40af", "#16a34a", "#f59e0b", "#64748b"],
-        textinfo="label+percent"
-    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=daily_stats["日期"], y=daily_stats["收盘"],
+        mode="lines", line=dict(color="#1e40af", width=2), name="平均收盘价",
+        fill="tozeroy", fillcolor="rgba(30,64,175,0.05)"
+    ), row=1, col=1, secondary_y=False)
 
-    colors = ["#16a34a" if v >= 0 else "#dc2626" for v in sector_stats["平均涨跌幅(%)"]]
-    fig.add_trace(go.Bar(
-        x=sector_stats["板块"], y=sector_stats["平均涨跌幅(%)"],
-        marker_color=colors, name="平均涨跌幅(%)"
-    ), row=1, col=2)
+    fig.add_trace(go.Scatter(
+        x=daily_stats["日期"], y=daily_stats["累计收益"],
+        mode="lines", line=dict(color="#06b6d4", width=1.5, dash="dot"), name="累计收益(%)"
+    ), row=1, col=1, secondary_y=True)
 
-    fig.add_trace(go.Bar(
-        x=sector_stats["板块"], y=sector_stats["平均换手率(%)"],
-        marker_color=["#8b5cf6"] * len(sector_stats), name="平均换手率(%)"
-    ), row=1, col=3)
+    vol_colors = ["#16a34a" if r >= 0 else "#dc2626" for r in daily_stats["涨跌幅"]]
+    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["成交量"],
+                         marker_color=vol_colors, name="成交量", opacity=0.7), row=2, col=1)
+    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["涨跌幅"],
+                         marker_color=vol_colors, name="平均涨跌幅(%)", opacity=0.8), row=3, col=1)
 
     fig.update_layout(
-        title="沪深300成分股板块分析",
-        height=400, template="plotly_white",
-        showlegend=False,
-        margin=dict(l=20, r=20, t=60, b=20)
+        title="沪深300成分股整体走势概览",
+        height=700, template="plotly_white",
+        legend=dict(orientation="h", y=1.02),
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis_rangeslider_visible=False
     )
-    return fig, sector_stats
+    fig.update_yaxes(title_text="平均价格", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="累计收益(%)", row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
+    fig.update_yaxes(title_text="涨跌幅(%)", row=3, col=1)
+    return fig
 
 
 def draw_risk_analysis(df, code2name):
-    """绘制风险分析图"""
     stock_metrics = []
     for code in df["股票代码"].unique():
         s_df = df[df["股票代码"] == code].sort_values("日期").tail(60)
@@ -1080,7 +1331,7 @@ def main():
     st.markdown("""
     <div class="hero-title">
         <h1>沪深300股票智能预测分析平台</h1>
-        <p>实时数据 | DDM估值 | 基本面分析 | 智能选股 | 价格预测 | 风险评估</p>
+        <p>绝对估值(DCF+DDM) | 相对估值(PE/PB/PS) | 多因子模型 | K线图 | 智能选股</p>
     </div>
     """, unsafe_allow_html=True)
     st.divider()
@@ -1088,15 +1339,7 @@ def main():
     with st.sidebar:
         st.markdown("<div class='sidebar-header'><h3>控制面板</h3></div>", unsafe_allow_html=True)
 
-        st.subheader("1. 数据获取方式")
-        data_source = st.radio(
-            "选择数据源",
-            ["在线获取实时数据（推荐）", "上传本地CSV文件"],
-            index=0,
-            help="在线获取使用akshare实时数据，上传文件需自行准备数据"
-        )
-
-        st.subheader("2. 数据时间范围")
+        st.subheader("1. 数据时间范围")
         col_a, col_b = st.columns(2)
         with col_a:
             start_date = st.date_input("开始日期", datetime(2025, 1, 1))
@@ -1105,79 +1348,39 @@ def main():
         start_date_str = start_date.strftime("%Y-%m-%d")
         end_date_str = end_date.strftime("%Y-%m-%d")
 
-        st.subheader("3. 投资策略选择")
-        select_strategy = st.selectbox("选择策略", list(STRATEGY_DICT.keys()))
-        strat_cfg = STRATEGY_DICT[select_strategy]
-
-        st.markdown(f"""
-        <div style="background: {strat_cfg['risk_color']}15; padding: 12px; border-radius: 8px;
-                    border-left: 3px solid {strat_cfg['risk_color']}; margin-top: 8px;">
-            <strong>风险等级: {strat_cfg['risk_level']}</strong><br>
-            <small>{strat_cfg['desc']}</small>
+        st.subheader("2. 分析设置")
+        st.markdown("""
+        <div class="info-box" style="font-size:0.85rem;">
+            <strong>多因子模型权重:</strong><br>
+            价值因子 30% | 动量因子 25%<br>
+            质量因子 25% | 趋势因子 20%<br><br>
+            <strong>估值方法:</strong><br>
+            绝对估值: DCF + DDM<br>
+            相对估值: PE/PB/PS行业对比
         </div>
         """, unsafe_allow_html=True)
 
         run_btn = st.button("开始智能分析", type="primary", use_container_width=True)
 
-        st.divider()
-        st.subheader("文件上传（备选）")
-        file_name_map = st.file_uploader("沪深300名单CSV", type=["csv"], key="name_file")
-        file_data = st.file_uploader("股票行情CSV", type=["csv"], key="data_file")
-
     # ==================== 数据加载 ====================
     df_stock = None
     code2name = {}
-    fundamentals = {}
 
-    if data_source == "在线获取实时数据（推荐）":
-        code2name, name_msg = get_hs300_constituents()
-        if code2name:
-            st.sidebar.success(name_msg)
-            if run_btn:
-                progress_bar = st.progress(0, text="准备获取数据...")
-                status_text = st.empty()
-                df_stock, data_msg = fetch_all_hs300_data(
-                    code2name, start_date_str, end_date_str, progress_bar, status_text
-                )
-                if df_stock is not None:
-                    st.success(data_msg)
-                    with st.spinner("正在获取基本面信息..."):
-                        fundamentals = get_stock_fundamentals_batch(df_stock["股票代码"].unique()[:50])
-                else:
-                    st.error(data_msg)
-        else:
-            st.error(name_msg)
+    code2name, name_msg = get_hs300_constituents()
+    if code2name:
+        st.sidebar.success(name_msg)
+        if run_btn:
+            progress_bar = st.progress(0, text="准备获取数据...")
+            status_text = st.empty()
+            df_stock, data_msg = fetch_all_hs300_data(
+                code2name, start_date_str, end_date_str, progress_bar, status_text
+            )
+            if df_stock is not None:
+                st.success(data_msg)
+            else:
+                st.error(data_msg)
     else:
-        if file_name_map is not None:
-            try:
-                df_map = pd.read_csv(file_name_map)
-                df_map["纯代码"] = df_map["code"].apply(lambda x: re.sub(r"^(sh\.|sz\.)", "", str(x)))
-                df_map["纯代码"] = pd.to_numeric(df_map["纯代码"], errors="coerce")
-                df_map = df_map.dropna(subset=["纯代码"])
-                code2name = dict(zip(df_map["纯代码"].astype(int), df_map["code_name"]))
-                st.sidebar.success(f"沪深300名单加载成功，共 {len(code2name)} 只")
-            except Exception as e:
-                st.sidebar.error(f"名单加载失败: {e}")
-
-        if file_data is not None and code2name:
-            try:
-                df_stock = pd.read_csv(file_data)
-                required_cols = ["股票代码", "日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]
-                miss = [c for c in required_cols if c not in df_stock.columns]
-                if miss:
-                    st.error(f"缺少必填字段: {','.join(miss)}")
-                    df_stock = None
-                else:
-                    df_stock["股票代码"] = pd.to_numeric(df_stock["股票代码"], errors="coerce").fillna(0).astype(int)
-                    df_stock["日期"] = pd.to_datetime(df_stock["日期"], errors="coerce")
-                    df_stock = df_stock.dropna(subset=["股票代码", "日期", "开盘", "收盘"])
-                    df_stock = df_stock[df_stock["股票代码"] > 0]
-                    df_stock = df_stock.sort_values(["股票代码", "日期"]).reset_index(drop=True)
-                    df_stock["股票名称"] = df_stock["股票代码"].map(code2name)
-                    st.success(f"行情数据加载完成 | {len(df_stock)} 条记录 | {df_stock['股票代码'].nunique()} 只股票")
-            except Exception as e:
-                st.error(f"行情数据加载失败: {e}")
-                df_stock = None
+        st.error(name_msg)
 
     # ==================== 主页面内容 ====================
     if df_stock is not None and len(df_stock) > 0:
@@ -1194,7 +1397,7 @@ def main():
         st.divider()
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "市场概览", "技术分析", "智能选股", "价格预测", "风险分析"
+            "市场概览", "个股深度分析", "智能选股", "价格预测", "风险分析"
         ])
 
         # ---- Tab1: 市场概览 ----
@@ -1203,18 +1406,9 @@ def main():
             fig_overview = draw_index_overview(df_stock)
             st.plotly_chart(fig_overview, use_container_width=True)
 
-            st.markdown("### 板块分布分析")
-            fig_sector, sector_stats = draw_sector_analysis(df_stock, code2name)
-            st.plotly_chart(fig_sector, use_container_width=True)
-            st.dataframe(sector_stats, use_container_width=True, hide_index=True)
-
-            st.markdown("### 个股涨跌幅相关性")
-            fig_corr = draw_correlation_heatmap(df_stock, code2name, top_n=15)
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-        # ---- Tab2: 技术分析 ----
+        # ---- Tab2: 个股深度分析 ----
         with tab2:
-            st.markdown("### 选择个股进行技术分析")
+            st.markdown("### 选择个股进行深度估值分析")
             available_stocks = sorted(df_stock["股票代码"].unique())
             stock_options = {str(c): f"{code2name.get(c, '未知')}({c})" for c in available_stocks}
             selected_stock = st.selectbox(
@@ -1231,152 +1425,225 @@ def main():
                     s_df_calc = calc_technical_indicators(s_df)
                     latest = s_df_calc.iloc[-1]
 
-                    # 获取基本面信息
                     code_str = str(code_int).zfill(6)
                     info = get_stock_individual_info(code_str)
                     fin_df = get_stock_financial_indicators(code_str)
-                    ddm = calc_ddm_valuation(code_int, stock_name, latest["收盘"], fin_df)
+                    ddm = calc_ddm_valuation(latest["收盘"], fin_df)
+                    dcf = calc_dcf_valuation(code_str, latest["收盘"], fin_df)
+                    relative = calc_relative_valuation(code_str, latest["收盘"], fin_df, info.get("行业", ""))
+                    factor_scores = calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df)
 
-                    # 基本信息展示
+                    # 基本信息
                     st.markdown(f"""
                     <div class="info-box">
                         <strong>{stock_name}({code_int})</strong> |
-                        <strong>行业:</strong> {info.get('行业', '未知')} |
+                        <strong>行业:</strong> {info.get('行业', '未知')}（{classify_industry(info.get('行业', ''))}） |
                         <strong>总股本:</strong> {info.get('总股本', 'N/A')} |
                         <strong>总市值:</strong> {info.get('总市值', 'N/A')} |
                         <strong>上市时间:</strong> {info.get('上市时间', 'N/A')}
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # DDM估值卡片
+                    # 绝对估值: DCF
                     st.markdown(f"""
                     <div class="valuation-box">
-                        <h4>DDM股利贴现模型估值</h4>
-                        <p><strong>内在价值:</strong> {ddm['内在价值']}元 |
-                        <strong>当前价格:</strong> {ddm['当前价格']}元 |
-                        <strong>估值溢价:</strong> <span style="color:{ddm['估值颜色']}">{ddm['估值溢价']}% ({ddm['估值判断']})</span></p>
-                        <p><strong>每股股利:</strong> {ddm['每股股利']} |
-                        <strong>折现率:</strong> {ddm['折现率']}% |
-                        <strong>永续增长率:</strong> {ddm['永续增长率']}% |
-                        <strong>ROE:</strong> {ddm['ROE']} |
-                        <strong>PE:</strong> {ddm['PE']} |
-                        <strong>PB:</strong> {ddm['PB']}</p>
-                        <p><small>DDM模型公式: V = D1 / (r - g)，其中D1为预期每股股利，r为折现率，g为永续增长率</small></p>
+                        <h4>绝对估值法 - DCF现金流折现模型</h4>
+                        <p><strong>每股内在价值:</strong> {dcf['内在价值']}元 |
+                        <strong>当前价格:</strong> {dcf['当前价格']}元 |
+                        <strong>估值溢价:</strong> <span style="color:{dcf['估值颜色']}">{dcf['估值溢价']}% ({dcf['估值判断']})</span></p>
+                        <p><strong>企业价值(EV):</strong> {dcf['企业价值']}亿元 |
+                        <strong>股权价值:</strong> {dcf['股权价值']}亿元 |
+                        <strong>WACC:</strong> {dcf['WACC']}%</p>
+                        <p><strong>预测期FCFF现值:</strong> {dcf['预测期FCFF现值']}亿元 |
+                        <strong>终值现值:</strong> {dcf['终值现值']}亿元 |
+                        <strong>FCFF:</strong> {dcf['FCFF']}亿元</p>
+                        <p><strong>高增长期增长率:</strong> {dcf['高增长期增长率']}% |
+                        <strong>永续增长率:</strong> {dcf['永续增长率']}%</p>
+                        <p><small>两阶段DCF模型: 预测期({dcf['高增长期增长率']}%增长) + 永续期({dcf['永续增长率']}%增长)，折现率WACC={dcf['WACC']}%</small></p>
                     </div>
                     """, unsafe_allow_html=True)
 
+                    # 绝对估值: DDM
+                    st.markdown(f"""
+                    <div class="valuation-box">
+                        <h4>绝对估值法 - DDM股利贴现模型</h4>
+                        <p><strong>每股内在价值:</strong> {ddm['内在价值']}元 |
+                        <strong>当前价格:</strong> {ddm['当前价格']}元 |
+                        <strong>估值溢价:</strong> <span style="color:{ddm['估值颜色']}">{ddm['估值溢价']}% ({ddm['估值判断']})</span></p>
+                        <p><strong>每股股利(DPS):</strong> {ddm['每股股利']} |
+                        <strong>折现率(r):</strong> {ddm['折现率']}% |
+                        <strong>永续增长率(g):</strong> {ddm['永续增长率']}%</p>
+                        <p><strong>ROE:</strong> {ddm['ROE']}% |
+                        <strong>EPS:</strong> {ddm['EPS']} |
+                        <strong>PE:</strong> {ddm['PE']} |
+                        <strong>PB:</strong> {ddm['PB']}</p>
+                        <p><small>戈登增长模型: V = D1 / (r - g)。折现率r = 无风险利率(2.5%) + Beta * 市场风险溢价(6%)</small></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 相对估值法
+                    st.markdown(f"""
+                    <div class="factor-box">
+                        <h4>相对估值法 - 行业对比分析</h4>
+                        <p><strong>PE:</strong> {relative['PE']} <span style="color:{relative['PE颜色']}">({relative['PE判断']})</span> |
+                        <strong>行业PE区间:</strong> {relative['行业PE区间']}</p>
+                        <p><strong>PB:</strong> {relative['PB']} <span style="color:{relative['PB颜色']}">({relative['PB判断']})</span> |
+                        <strong>行业PB区间:</strong> {relative['行业PB区间']}</p>
+                        <p><strong>PS:</strong> {relative['PS']} <span style="color:{relative['PS颜色']}">({relative['PS判断']})</span> |
+                        <strong>行业PS区间:</strong> {relative['行业PS区间']}</p>
+                        <p><strong>EV/EBITDA:</strong> {relative['EV/EBITDA']}</p>
+                        <p><strong>综合判断:</strong> <span style="color:{relative['综合颜色']};font-weight:bold">{relative['综合判断']}</span></p>
+                        <p><small>相对估值法通过与行业平均水平对比，判断股票估值高低</small></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 多因子评分
+                    st.markdown(f"""
+                    <div class="factor-box">
+                        <h4>多因子综合评分: {factor_scores['综合评分']:.1f}分</h4>
+                        <p>价值因子: {factor_scores['价值因子']:.0f}分 |
+                        动量因子: {factor_scores['动量因子']:.0f}分 |
+                        质量因子: {factor_scores['质量因子']:.0f}分 |
+                        趋势因子: {factor_scores['趋势因子']:.0f}分</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 雷达图
+                    fig_radar = draw_factor_radar(factor_scores)
+                    st.plotly_chart(fig_radar, use_container_width=True)
+
+                    # 技术指标
                     mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
                     mc1.metric("最新收盘价", f"{latest['收盘']:.2f}元")
                     mc2.metric("RSI(14)", f"{latest['RSI']:.1f}",
                               "超买" if latest['RSI'] > 70 else ("超卖" if latest['RSI'] < 30 else "中性"))
                     mc3.metric("MACD", f"{latest['MACD']:.4f}",
                               "金叉" if latest['DIF'] > latest['DEA'] else "死叉")
-                    mc4.metric("20日涨幅", f"{(latest['收盘']/s_df_calc['收盘'].iloc[-21]-1)*100:.2f}%")
-                    mc5.metric("60日涨幅", f"{(latest['收盘']/s_df_calc['收盘'].iloc[-61]-1)*100:.2f}%"
-                              if len(s_df_calc) >= 61 else "N/A")
-                    mc6.metric("平均换手率", f"{s_df_calc['换手率'].iloc[-20:].mean():.2f}%")
+                    mc4.metric("20日涨幅", f"{factor_scores['20日涨幅']:.2f}%")
+                    mc5.metric("60日涨幅", f"{factor_scores['60日涨幅']:.2f}%")
+                    mc6.metric("年化波动率", f"{factor_scores['年化波动率']:.1f}%")
 
+                    # K线图
                     fig_kline = draw_stock_kline(s_df_calc, stock_name, code_int)
                     st.plotly_chart(fig_kline, use_container_width=True)
-
-                    st.markdown("#### 技术指标解读")
-                    rsi_val = latest['RSI']
-                    if rsi_val > 70:
-                        rsi_msg = f"RSI={rsi_val:.1f}，处于**超买区域**，注意回调风险"
-                    elif rsi_val < 30:
-                        rsi_msg = f"RSI={rsi_val:.1f}，处于**超卖区域**，可能存在反弹机会"
-                    else:
-                        rsi_msg = f"RSI={rsi_val:.1f}，处于**中性区域**"
-
-                    trend_msg = "多头排列（看涨）" if latest['MA5'] > latest['MA10'] > latest['MA20'] else \
-                               "空头排列（看跌）" if latest['MA5'] < latest['MA10'] < latest['MA20'] else "震荡整理"
-
-                    st.markdown(f"""
-                    <div class="info-box">
-                        <strong>RSI指标：</strong>{rsi_msg}<br>
-                        <strong>均线排列：</strong>{trend_msg}<br>
-                        <strong>MACD信号：</strong>{"DIF > DEA，金叉看涨" if latest['DIF'] > latest['DEA'] else "DIF < DEA，死叉看跌"}<br>
-                        <strong>布林带：</strong>价格位于{"上轨附近，注意压力" if latest['收盘'] > latest['BOLL_MID'] else "下轨附近，关注支撑"}
-                    </div>
-                    """, unsafe_allow_html=True)
                 else:
                     st.warning(f"{stock_name} 数据不足30条，无法进行技术分析")
 
         # ---- Tab3: 智能选股 ----
         with tab3:
-            st.markdown(f"### 策略选股结果 — {select_strategy}")
-            st.markdown(f"""
+            st.markdown("### 多因子模型智能选股")
+            st.markdown("""
             <div class="info-box">
-                <strong>策略说明：</strong>{strat_cfg['desc']}<br>
-                <strong>选股规则：</strong>{strat_cfg['select_rule']}<br>
-                <strong>风险等级：</strong>{strat_cfg['risk_level']} |
-                <strong>建议持有：</strong>{strat_cfg['hold_days'][0]}-{strat_cfg['hold_days'][1]}天 |
-                <strong>目标收益：</strong>{strat_cfg['target_return'][0]*100:.0f}%-{strat_cfg['target_return'][1]*100:.0f}%
+                <strong>选股模型说明：</strong><br>
+                基于价值因子(30%) + 动量因子(25%) + 质量因子(25%) + 趋势因子(20%)进行综合评分。<br>
+                价值因子整合DCF现金流折现、DDM股利贴现、相对估值(PE/PB/PS)三种估值方法。<br>
+                筛选出沪深300中综合得分最高的5只优质个股。
             </div>
             """, unsafe_allow_html=True)
 
-            stock_res, pick_msg = stock_filter_and_pick(df_stock, select_strategy, code2name, fundamentals)
+            stock_res, pick_msg = stock_filter_and_pick(df_stock, code2name)
             if stock_res is None:
                 st.error(pick_msg)
             else:
                 st.success(pick_msg)
 
-                df_res = pd.DataFrame([{k: v for k, v in item.items()
-                                        if k not in ["K线数据", "预测数据", "投资建议", "DDM估值"]}
+                display_cols = ["序号", "股票代码", "股票名称", "最新收盘价", "综合评分",
+                               "价值因子", "动量因子", "质量因子", "趋势因子",
+                               "20日涨幅", "60日涨幅", "行业", "行业大类"]
+                df_res = pd.DataFrame([{k: v for k, v in item.items() if k in display_cols}
                                        for item in stock_res])
                 st.dataframe(df_res, use_container_width=True, hide_index=True)
                 st.divider()
 
-                st.markdown("### 个股详细分析")
+                st.markdown("### 个股详细分析与投资建议")
                 for item in stock_res:
                     ddm = item["DDM估值"]
+                    dcf = item["DCF估值"]
+                    relative = item["相对估值"]
                     advice = item["投资建议"]
 
                     with st.expander(
                         f"第{item['序号']}只: {item['股票名称']}({item['股票代码']}) | "
-                        f"行业: {item['行业']} | 评分: {item['综合评分']:.1f} | "
-                        f"DDM: {ddm['估值判断']}",
+                        f"综合评分: {item['综合评分']:.1f} | "
+                        f"DCF: {dcf['估值判断']} | DDM: {ddm['估值判断']} | "
+                        f"适合度: {advice['适合度评级']}",
                         expanded=True
                     ):
-                        # 基本信息
+                        # 适合度评级
+                        st.markdown(f"""
+                        <div style="background: {advice['适合度颜色']}15; padding: 12px; border-radius: 8px;
+                                    border-left: 4px solid {advice['适合度颜色']}; margin-bottom: 10px;">
+                            <strong>当前适合度评级: {advice['适合度评级']}</strong> |
+                            <strong>未来投资建议: <span style="color:{advice['未来适合颜色']}">{advice['未来适合投资']}</span></strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 行业信息
                         st.markdown(f"""
                         <div class="info-box">
                             <strong>行业分类：</strong>{item['行业']}（{item['行业大类']}）<br>
-                            <strong>均线趋势：</strong>{item['均线趋势']} |
-                            <strong>MACD信号：</strong>{item['MACD信号']} |
-                            <strong>RSI：</strong>{item['RSI']}
+                            <strong>20日涨幅：</strong>{item['20日涨幅']:.2f}% |
+                            <strong>60日涨幅：</strong>{item['60日涨幅']:.2f}% |
+                            <strong>年化波动率：</strong>{item['年化波动率']:.1f}%
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 多因子评分
+                        st.markdown(f"""
+                        <div class="factor-box">
+                            <h4>多因子评分详情</h4>
+                            <p>价值因子: {item['价值因子']:.0f}分 |
+                            动量因子: {item['动量因子']:.0f}分 |
+                            质量因子: {item['质量因子']:.0f}分 |
+                            趋势因子: {item['趋势因子']:.0f}分</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # DCF估值
+                        st.markdown(f"""
+                        <div class="valuation-box">
+                            <h4>绝对估值 - DCF现金流折现模型</h4>
+                            <p><strong>每股内在价值:</strong> {dcf['内在价值']}元 |
+                            <strong>当前价格:</strong> {dcf['当前价格']}元 |
+                            <strong>估值溢价:</strong> <span style="color:{dcf['估值颜色']};font-weight:bold">{dcf['估值溢价']}% ({dcf['估值判断']})</span></p>
+                            <p><strong>企业价值:</strong> {dcf['企业价值']}亿元 |
+                            <strong>股权价值:</strong> {dcf['股权价值']}亿元 |
+                            <strong>WACC:</strong> {dcf['WACC']}%</p>
+                            <p><strong>预测期FCFF现值:</strong> {dcf['预测期FCFF现值']}亿元 |
+                            <strong>终值现值:</strong> {dcf['终值现值']}亿元</p>
                         </div>
                         """, unsafe_allow_html=True)
 
                         # DDM估值
                         st.markdown(f"""
                         <div class="valuation-box">
-                            <h4>DDM股利贴现模型估值分析</h4>
-                            <p><strong>内在价值:</strong> {ddm['内在价值']}元 |
+                            <h4>绝对估值 - DDM股利贴现模型</h4>
+                            <p><strong>每股内在价值:</strong> {ddm['内在价值']}元 |
                             <strong>当前价格:</strong> {ddm['当前价格']}元 |
                             <strong>估值溢价:</strong> <span style="color:{ddm['估值颜色']};font-weight:bold">{ddm['估值溢价']}% ({ddm['估值判断']})</span></p>
                             <p><strong>每股股利(DPS):</strong> {ddm['每股股利']} |
                             <strong>折现率(r):</strong> {ddm['折现率']}% |
                             <strong>永续增长率(g):</strong> {ddm['永续增长率']}%</p>
-                            <p><strong>ROE:</strong> {ddm['ROE']}% |
-                            <strong>EPS:</strong> {ddm['EPS']} |
-                            <strong>PE:</strong> {ddm['PE']} |
-                            <strong>PB:</strong> {ddm['PB']} |
-                            <strong>股息率:</strong> {ddm['股息率']}%</p>
-                            <p><small>戈登增长模型: V = D1 / (r - g)。折现率r = 无风险利率(2.5%) + Beta * 市场风险溢价(6%)</small></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 相对估值
+                        st.markdown(f"""
+                        <div class="factor-box">
+                            <h4>相对估值法 - 行业对比</h4>
+                            <p><strong>PE:</strong> {relative['PE']} <span style="color:{relative['PE颜色']}">({relative['PE判断']})</span> |
+                            <strong>PB:</strong> {relative['PB']} <span style="color:{relative['PB颜色']}">({relative['PB判断']})</span> |
+                            <strong>PS:</strong> {relative['PS']} <span style="color:{relative['PS颜色']}">({relative['PS判断']})</span></p>
+                            <p><strong>综合判断:</strong> <span style="color:{relative['综合颜色']};font-weight:bold">{relative['综合判断']}</span></p>
                         </div>
                         """, unsafe_allow_html=True)
 
                         # 交易指标
                         mc1, mc2, mc3, mc4 = st.columns(4)
                         mc1.metric("建议买入价", f"{item['建议买入价']}元", f"现价 {item['最新收盘价']}元")
-                        mc2.metric("资金占比", f"{item['资金占比']}%")
-                        mc3.metric("预期卖出价", f"{item['预期卖出价']}元", f"收益 {item['预期收益率']}%")
-                        mc4.metric("预期卖出日", item["预期卖出日"], f"持有 {item['持有天数']}天")
-
-                        c_info1, c_info2 = st.columns(2)
-                        c_info1.info(f"分批卖出: {item['分批卖出']}")
-                        c_info2.info(f"卖出比例: {item['卖出比例']}")
+                        mc2.metric("预期卖出价", f"{item['预期卖出价']}元", f"收益 {item['预期收益率']}%")
+                        mc3.metric("预期卖出日", item["预期卖出日"], f"持有 {item['持有天数']}天")
+                        mc4.metric("综合评分", f"{item['综合评分']:.1f}分")
 
                         # K线图
                         k_fig = draw_stock_kline(item["K线数据"], item["股票名称"], item["股票代码"])
@@ -1391,20 +1658,21 @@ def main():
                             for risk in advice["风险提示"]:
                                 st.markdown(f"<div class='risk-box' style='padding:10px;margin:5px 0;'>⚠️ {risk}</div>", unsafe_allow_html=True)
 
-                # 综合投资建议
                 st.divider()
                 st.markdown("""
                 <div class="advice-box">
                     <h4>综合操作建议</h4>
-                    <p>1. 严格按照推荐资金比例分配仓位，分散投资风险；</p>
-                    <p>2. 尽量在建议买入价格区间内分批建仓，不追高；</p>
-                    <p>3. 触及预期卖出价后，按规则止盈离场；</p>
-                    <p>4. 统一设置5%~8%为止损线，控制亏损；</p>
-                    <p>5. 每日跟踪大盘与个股走势，动态观察调整；</p>
-                    <p>6. 关注DDM估值变化，若估值从低估转为高估，考虑减仓。</p>
+                    <p>1. 严格按照综合评分排序分配仓位，高分个股优先配置；</p>
+                    <p>2. 关注DCF和DDM估值，优先选择两种绝对估值均显示低估的个股；</p>
+                    <p>3. 相对估值(PE/PB/PS)作为辅助验证，与行业均值对比；</p>
+                    <p>4. 建议分批建仓，首次仓位不超过总资金的20%；</p>
+                    <p>5. 设置8%-10%为止损线，跌破关键支撑位果断止损；</p>
+                    <p>6. 到达预期卖出价后分批止盈，锁定收益；</p>
+                    <p>7. 定期关注多因子评分和估值变化，动态调整持仓。</p>
                 </div>
                 <div class="risk-box">
-                    <strong>风险提示：</strong>本系统仅基于历史数据做量化分析，DDM模型基于多项假设估算，不构成任何投资建议。股市有风险，入市需谨慎。
+                    <strong>风险提示：</strong>本系统基于历史数据和多因子模型进行量化分析，DCF和DDM模型基于多项假设估算，
+                    相对估值法基于行业均值对比，均不构成任何投资建议。股市有风险，入市需谨慎。
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1469,33 +1737,34 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-    elif df_stock is None and data_source == "在线获取实时数据（推荐）":
+    else:
         st.markdown("""
         <div style="text-align: center; padding: 60px 20px;">
             <h2 style="color: #1e40af; margin-bottom: 20px;">欢迎使用沪深300股票智能预测分析平台</h2>
-            <p style="color: #64748b; font-size: 1.1rem; max-width: 600px; margin: 0 auto 30px;">
-                本平台基于akshare实时数据，集成DDM股利贴现模型估值，提供沪深300成分股的技术分析、基本面分析、智能选股、价格预测和风险评估功能。
+            <p style="color: #64748b; font-size: 1.1rem; max-width: 700px; margin: 0 auto 30px;">
+                本平台基于akshare实时数据，采用绝对估值法(DCF+DDM)和相对估值法(PE/PB/PS)进行多维度估值分析，
+                结合多因子模型进行综合评分选股，提供精美K线图、价格预测和风险评估功能。
             </p>
             <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
                 <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
-                    <div style="font-size: 2rem; margin-bottom: 8px;">📊</div>
-                    <strong>实时数据</strong>
-                    <p style="color: #64748b; font-size: 0.85rem;">akshare实时获取沪深300成分股行情</p>
-                </div>
-                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
                     <div style="font-size: 2rem; margin-bottom: 8px;">💰</div>
-                    <strong>DDM估值</strong>
-                    <p style="color: #64748b; font-size: 0.85rem;">戈登增长模型计算股票内在价值</p>
+                    <strong>绝对估值</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">DCF现金流折现 + DDM股利贴现</p>
                 </div>
                 <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
-                    <div style="font-size: 2rem; margin-bottom: 8px;">📈</div>
-                    <strong>技术分析</strong>
-                    <p style="color: #64748b; font-size: 0.85rem;">K线、均线、MACD、RSI、布林带</p>
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📊</div>
+                    <strong>相对估值</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">PE/PB/PS行业对比分析</p>
                 </div>
                 <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
                     <div style="font-size: 2rem; margin-bottom: 8px;">🎯</div>
-                    <strong>智能选股</strong>
-                    <p style="color: #64748b; font-size: 0.85rem;">三种策略+DDM估值筛选优质个股</p>
+                    <strong>多因子模型</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">价值+动量+质量+趋势综合评分</p>
+                </div>
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📈</div>
+                    <strong>K线图</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">精美K线+均线+MACD+RSI+布林带</p>
                 </div>
                 <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
                     <div style="font-size: 2rem; margin-bottom: 8px;">🔮</div>
@@ -1504,7 +1773,7 @@ def main():
                 </div>
             </div>
             <p style="color: #94a3b8; margin-top: 40px; font-size: 0.9rem;">
-                请在左侧控制面板选择数据源和时间范围，然后点击"开始智能分析"按钮
+                请在左侧控制面板选择数据时间范围，然后点击"开始智能分析"按钮
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1512,11 +1781,10 @@ def main():
     st.divider()
     st.markdown("""
     <div style="text-align: center; color: #94a3b8; font-size: 0.8rem; padding: 10px;">
-        沪深300股票智能预测分析平台 V2.0 | 数据来源: akshare | DDM估值模型 | 本平台仅供学习研究，不构成任何投资建议
+        沪深300股票智能预测分析平台 V4.0 | 数据来源: akshare | 绝对估值(DCF+DDM) | 相对估值(PE/PB/PS) | 本平台仅供学习研究，不构成任何投资建议
     </div>
     """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
     main()
-
